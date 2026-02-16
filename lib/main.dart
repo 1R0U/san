@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -16,9 +17,12 @@ class CardSortGame extends StatefulWidget {
 }
 
 class _CardSortGameState extends State<CardSortGame> {
-  List<Map<String, String>> poolCards = [];
-  Map<String, List<String>> collections = {};
-  List<String> genres = [];
+  List<Map<String, dynamic>> poolCards = [];
+  Map<int, List<String>> playerCollections = {1: [], 2: []};
+  Map<int, String> playerTargets = {1: '', 2: ''};
+
+  int currentPlayer = 1;
+  bool isProcessing = false;
   bool isLoading = true;
 
   @override
@@ -31,24 +35,66 @@ class _CardSortGameState extends State<CardSortGame> {
     try {
       final String response = await rootBundle.loadString('assets/cards.json');
       final data = json.decode(response);
-      List<Map<String, String>> tempPool = [];
-      List<String> tempGenres = [];
+      List<Map<String, dynamic>> tempPool = [];
+      List<String> allGenres = [];
 
       for (var cat in data['categories']) {
-        String g = cat['genre'];
-        tempGenres.add(g);
-        collections[g] = [];
+        allGenres.add(cat['genre']);
         for (var item in cat['items']) {
-          tempPool.add({'text': item, 'genre': g});
+          tempPool.add({
+            'text': item,
+            'genre': cat['genre'],
+            'isFaceUp': false,
+            'isTaken': false,
+          });
         }
       }
+
       setState(() {
-        genres = tempGenres;
+        allGenres.shuffle();
+        playerTargets[1] = allGenres[0];
+        playerTargets[2] = allGenres[1];
+        playerCollections = {1: [], 2: []};
         poolCards = tempPool..shuffle();
+        currentPlayer = 1;
         isLoading = false;
       });
     } catch (e) {
       debugPrint("エラー: $e");
+    }
+  }
+
+  void handleCardTap(int index) async {
+    if (isProcessing ||
+        poolCards[index]['isFaceUp'] ||
+        poolCards[index]['isTaken']) return;
+
+    setState(() {
+      poolCards[index]['isFaceUp'] = true;
+      isProcessing = true;
+    });
+
+    final selectedCard = poolCards[index];
+    final String myTarget = playerTargets[currentPlayer]!;
+
+    if (selectedCard['genre'] == myTarget) {
+      await Future.delayed(const Duration(milliseconds: 600));
+      setState(() {
+        selectedCard['isTaken'] = true;
+        playerCollections[currentPlayer]!.add(selectedCard['text']);
+        isProcessing = false;
+      });
+
+      if (playerCollections[currentPlayer]!.length == 5) {
+        showWinDialog(currentPlayer);
+      }
+    } else {
+      await Future.delayed(const Duration(milliseconds: 1000));
+      setState(() {
+        selectedCard['isFaceUp'] = false;
+        currentPlayer = currentPlayer == 1 ? 2 : 1;
+        isProcessing = false;
+      });
     }
   }
 
@@ -58,113 +104,67 @@ class _CardSortGameState extends State<CardSortGame> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('散'),
-        backgroundColor: Colors.orange,
-        actions: [
-          IconButton(
-              icon: const Icon(Icons.refresh), onPressed: () => loadGame()),
-        ],
-      ),
+      backgroundColor: const Color(0xFFEEEEEE),
       body: Column(
         children: [
-          // 上部：バラバラのカード
-          Expanded(
-            flex: 2,
-            child: Container(
-              width: double.infinity,
-              color: Colors.grey[100],
-              padding: const EdgeInsets.all(16),
-              child: SingleChildScrollView(
-                child: Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  alignment: WrapAlignment.center,
-                  children: poolCards
-                      .map((c) => Draggable<Map<String, String>>(
-                            data: c,
-                            feedback:
-                                CardView(text: c['text']!, isDragging: true),
-                            childWhenDragging: Opacity(
-                                opacity: 0.2,
-                                child: CardView(text: c['text']!)),
-                            child: CardView(text: c['text']!),
-                          ))
-                      .toList(),
+          // ヘッダーをさらにスリム化
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
+            color: Colors.white,
+            child: Row(
+              children: [
+                Expanded(child: playerBox(1)),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 8),
+                  child: Text("VS",
+                      style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey)),
                 ),
-              ),
+                Expanded(child: playerBox(2)),
+              ],
             ),
           ),
-          const Divider(height: 1, thickness: 2),
-          // 下部：ジャンル別ボックス
+          // カードグリッドエリア（縦幅を最大化）
           Expanded(
-            flex: 3,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 20),
-              itemCount: genres.length,
-              itemBuilder: (context, index) {
-                final g = genres[index];
-                return DragTarget<Map<String, String>>(
-                  onWillAccept: (data) => data?['genre'] == g,
-                  onAccept: (data) {
-                    setState(() {
-                      collections[g]!.add(data!['text']!);
-                      poolCards.remove(data);
-                    });
-                    if (poolCards.isEmpty) showWinDialog();
-                  },
-                  builder: (context, candidate, _) => Container(
-                    width: 160,
-                    margin: const EdgeInsets.symmetric(horizontal: 8),
-                    decoration: BoxDecoration(
-                      color: candidate.isNotEmpty
-                          ? Colors.orange[50]
-                          : Colors.white,
-                      border: Border.all(color: Colors.orange, width: 2),
-                      borderRadius: BorderRadius.circular(15),
-                      boxShadow: [
-                        BoxShadow(
-                            color: Colors.black.withOpacity(0.05),
-                            blurRadius: 5)
-                      ],
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+              child: Center(
+                child: Container(
+                  constraints:
+                      const BoxConstraints(maxWidth: 1000), // 横幅を広げて縦を詰める
+                  child: GridView.builder(
+                    // スクロールを禁止
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 5,
+                      mainAxisSpacing: 6,
+                      crossAxisSpacing: 6,
+                      childAspectRatio: 2.2, // 横：縦の比率。数字を大きくするほど縦が薄くなる
                     ),
-                    child: Column(
-                      children: [
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          decoration: const BoxDecoration(
-                            color: Colors.orange,
-                            borderRadius:
-                                BorderRadius.vertical(top: Radius.circular(12)),
-                          ),
-                          child: Text(g,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold)),
-                        ),
-                        Expanded(
-                          child: ListView(
-                            padding: const EdgeInsets.all(8),
-                            children: collections[g]!
-                                .map((t) => Card(
-                                      margin: const EdgeInsets.only(bottom: 4),
-                                      child: Padding(
-                                        padding: const EdgeInsets.all(8.0),
-                                        child: Text(t,
-                                            textAlign: TextAlign.center),
-                                      ),
-                                    ))
-                                .toList(),
+                    itemCount: poolCards.length,
+                    itemBuilder: (context, index) {
+                      final card = poolCards[index];
+                      return Opacity(
+                        opacity: card['isTaken'] ? 0.0 : 1.0,
+                        child: GestureDetector(
+                          onTap: () =>
+                              card['isTaken'] ? null : handleCardTap(index),
+                          child: CardView(
+                            text: card['text'],
+                            isFaceUp: card['isFaceUp'],
+                            backColor: currentPlayer == 1
+                                ? Colors.blue[400]!
+                                : Colors.red[400]!,
                           ),
                         ),
-                      ],
-                    ),
+                      );
+                    },
                   ),
-                );
-              },
+                ),
+              ),
             ),
           ),
         ],
@@ -172,21 +172,45 @@ class _CardSortGameState extends State<CardSortGame> {
     );
   }
 
-  void showWinDialog() {
+  Widget playerBox(int pNum) {
+    bool isTurn = currentPlayer == pNum;
+    Color color = pNum == 1 ? Colors.blue : Colors.red;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+      decoration: BoxDecoration(
+        color: isTurn ? color.withOpacity(0.1) : Colors.white,
+        border: Border.all(color: isTurn ? color : Colors.grey[300]!, width: 2),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text("P$pNum: ${playerTargets[pNum]}",
+              style: TextStyle(
+                  fontSize: 12, fontWeight: FontWeight.bold, color: color)),
+          Text("${playerCollections[pNum]!.length} / 5",
+              style:
+                  const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+
+  void showWinDialog(int winner) {
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (_) => AlertDialog(
-        title: const Text('🎉 クリア！'),
-        content: const Text('すべてのカードを正しく仕分けました！'),
+        title: Text('🎉 プレイヤー$winnerの勝利！'),
+        content: Text('「${playerTargets[winner]}」をコンプリート！'),
         actions: [
           TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              loadGame();
-            },
-            child: const Text('もう一度遊ぶ'),
-          ),
+              onPressed: () {
+                Navigator.pop(context);
+                loadGame();
+              },
+              child: const Text('リプレイ')),
         ],
       ),
     );
@@ -195,30 +219,33 @@ class _CardSortGameState extends State<CardSortGame> {
 
 class CardView extends StatelessWidget {
   final String text;
-  final bool isDragging;
-  const CardView({super.key, required this.text, this.isDragging = false});
+  final bool isFaceUp;
+  final Color backColor;
+
+  const CardView(
+      {super.key,
+      required this.text,
+      required this.isFaceUp,
+      required this.backColor});
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border.all(color: Colors.orange.shade200),
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(isDragging ? 0.3 : 0.1),
-              blurRadius: isDragging ? 10 : 4,
-              offset: const Offset(2, 2),
-            )
-          ],
-        ),
-        child: Text(
-          text,
-          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+    return Container(
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: isFaceUp ? Colors.white : backColor,
+        borderRadius: BorderRadius.circular(4),
+        boxShadow: const [
+          BoxShadow(color: Colors.black12, blurRadius: 1, offset: Offset(1, 1))
+        ],
+      ),
+      child: Text(
+        isFaceUp ? text : "?",
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+          color: isFaceUp ? Colors.black87 : Colors.white,
         ),
       ),
     );
