@@ -103,7 +103,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                 children: [
                   const Icon(Icons.grid_view, size: 60, color: Colors.green),
                   const SizedBox(height: 10),
-                  const Text("ポイント制 52枚対戦",
+                  const Text("真　神経衰弱",
                       style:
                           TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 20),

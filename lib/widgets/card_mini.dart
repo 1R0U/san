@@ -4,12 +4,15 @@ class CardMini extends StatelessWidget {
   final Map card;
   final bool isMyTurn;
   final Color pColor;
+  // ★ 7の特殊効果などで使用するハイライト色を追加
+  final Color? highlightColor;
 
   const CardMini({
     super.key,
     required this.card,
     required this.isMyTurn,
     required this.pColor,
+    this.highlightColor, // ★ コンストラクタに追加
   });
 
   @override
@@ -25,7 +28,20 @@ class CardMini extends StatelessWidget {
       decoration: BoxDecoration(
         color: isFaceUp ? Colors.white : pColor.withOpacity(0.8),
         borderRadius: BorderRadius.circular(2),
-        border: isFaceUp ? Border.all(color: Colors.grey, width: 1) : null,
+        // ★ ハイライトがある場合は指定色で太い枠線を、ない場合は通常の枠線を表示
+        border: highlightColor != null
+            ? Border.all(color: highlightColor!, width: 2.5)
+            : (isFaceUp ? Border.all(color: Colors.grey, width: 1) : null),
+        // ★ ハイライト時にカードを光らせる（外光エフェクト）
+        boxShadow: highlightColor != null
+            ? [
+                BoxShadow(
+                  color: highlightColor!.withOpacity(0.6),
+                  blurRadius: 6,
+                  spreadRadius: 2,
+                )
+              ]
+            : null,
       ),
       child: Center(
         child: isFaceUp
@@ -44,7 +60,12 @@ class CardMini extends StatelessWidget {
                           height: 1)),
                 ],
               )
-            : const Icon(Icons.help_outline, size: 12, color: Colors.white24),
+            : Icon(
+                Icons.help_outline,
+                size: 12,
+                // ★ ハイライト中はアイコンの色を明るくして目立たせる
+                color: highlightColor != null ? Colors.white : Colors.white24,
+              ),
       ),
     );
   }

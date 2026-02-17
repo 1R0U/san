@@ -1,113 +1,121 @@
 import 'dart:math';
 
-/// ゲーム内の特殊効果（10, J, Qが揃った時）を管理するクラス
 class GameEffects {
-  /// クイーン(Q)が揃った時: カード全体を後ろに1マスずらす
-  /// 一番最後のカードが一番最初(0番目)に来ます
-  static List<dynamic> applyQueenEffect(List<dynamic> cards) {
+  /// Q: 各行ごとに横に1マスずらす
+  static List<dynamic> applyQueenEffect(
+      List<dynamic> cards, int crossAxisCount) {
     List<dynamic> updatedCards = List.from(cards);
-    if (updatedCards.isNotEmpty) {
-      var last = updatedCards.removeLast();
-      updatedCards.insert(0, last);
+    int totalCards = updatedCards.length;
+    int rowCount = (totalCards / crossAxisCount).ceil();
+    for (int r = 0; r < rowCount; r++) {
+      int startIdx = r * crossAxisCount;
+      int endIdx = (r + 1) * crossAxisCount;
+      if (endIdx > totalCards) endIdx = totalCards;
+      if (startIdx >= totalCards) break;
+      List<dynamic> row = updatedCards.sublist(startIdx, endIdx);
+      if (row.length > 1) {
+        var last = row.removeLast();
+        row.insert(0, last);
+        for (int i = 0; i < row.length; i++)
+          updatedCards[startIdx + i] = row[i];
+      }
     }
     return updatedCards;
   }
 
-  /// ジャック(J)が揃った時: 全カードを1行分(13枚)下にスライドさせる
-  /// 一番下の行が一番上に移動します
+  /// J: 全カードを1行分(13枚)下にスライド
   static List<dynamic> applyJackEffect(
       List<dynamic> cards, int crossAxisCount) {
     List<dynamic> updatedCards = List.from(cards);
     if (updatedCards.length <= crossAxisCount) return updatedCards;
-
-    // 最後の1行分（後ろから13枚）を切り取る
     List<dynamic> lastRow =
         updatedCards.sublist(updatedCards.length - crossAxisCount);
-    // 残りの部分を切り取る
     List<dynamic> remaining =
         updatedCards.sublist(0, updatedCards.length - crossAxisCount);
-
-    // [最後の一行] + [残りの部分] の順で結合
     return [...lastRow, ...remaining];
   }
 
-  /// 10が揃った時: 裏返しのカードからランダムに最大10枚を選んでシャッフル
+  /// 10: 裏返しのカードを最大10枚シャッフル
   static List<dynamic> applyTenEffect(List<dynamic> cards) {
     List<dynamic> updatedCards = List.from(cards);
     final random = Random();
-
-    // まだ取られておらず(isTaken:false)、表になっていない(isFaceUp:false)カードのINDEXを抽出
     List<int> faceDownIndices = [];
     for (int i = 0; i < updatedCards.length; i++) {
-      if (!updatedCards[i]['isTaken'] && !updatedCards[i]['isFaceUp']) {
+      if (!updatedCards[i]['isTaken'] && !updatedCards[i]['isFaceUp'])
         faceDownIndices.add(i);
-      }
     }
-
     if (faceDownIndices.isEmpty) return updatedCards;
-
-    // シャッフル対象のINDEXを決定（最大10枚）
     faceDownIndices.shuffle(random);
     int shuffleCount = min(faceDownIndices.length, 10);
     List<int> targetIndices = faceDownIndices.sublist(0, shuffleCount);
-
-    // 対象カードのデータ（rank/suit等）を抽出
     List<dynamic> targetData =
         targetIndices.map((idx) => updatedCards[idx]).toList();
-
-    // データの中身だけをシャッフル
     targetData.shuffle(random);
-
-    // 元のインデックス位置にシャッフルしたデータを書き戻す
-    for (int i = 0; i < targetIndices.length; i++) {
+    for (int i = 0; i < targetIndices.length; i++)
       updatedCards[targetIndices[i]] = targetData[i];
-    }
-
     return updatedCards;
   }
 
-  /// 9が揃った時: 画面を「田の字」に4分割し、対角線上のブロックを入れ替える
+  /// 9: 4分割対角入れ替え
   static List<dynamic> applyNineEffect(
       List<dynamic> cards, int crossAxisCount) {
     List<dynamic> updatedCards = List.from(cards);
     int totalCards = updatedCards.length;
-    int rowCount = totalCards ~/ crossAxisCount; // 行数（例: 4行）
-
-    int midRow = rowCount ~/ 2; // 中間の行
-    int midCol = crossAxisCount ~/ 2; // 中間の列
-
-    // 新しい配置を保持する一時的なリスト
+    int rowCount = totalCards ~/ crossAxisCount;
+    int midRow = rowCount ~/ 2;
+    int midCol = crossAxisCount ~/ 2;
     List<dynamic> result = List.from(updatedCards);
-
     for (int i = 0; i < totalCards; i++) {
-      int r = i ~/ crossAxisCount; // 現在の行
-      int c = i % crossAxisCount; // 現在の列
-
-      int targetRow;
-      int targetCol;
-
-      // --- 入れ替えロジック ---
-      // 左上(r < midRow, c < midCol) <-> 右下(r >= midRow, c >= midCol)
-      // 右上(r < midRow, c >= midCol) <-> 左下(r >= midRow, c < midCol)
-
-      if (r < midRow) {
-        targetRow = r + (rowCount - midRow); // 下側へ
-      } else {
-        targetRow = r - midRow; // 上側へ
-      }
-
-      if (c < midCol) {
-        targetCol = c + (crossAxisCount - midCol); // 右側へ
-      } else {
-        targetCol = c - midCol; // 左側へ
-      }
-
-      // 範囲外エラー防止（念のため）
+      int r = i ~/ crossAxisCount;
+      int c = i % crossAxisCount;
+      int targetRow = (r < midRow) ? r + (rowCount - midRow) : r - midRow;
+      int targetCol = (c < midCol) ? c + (crossAxisCount - midCol) : c - midCol;
       int targetIndex = targetRow * crossAxisCount + targetCol;
-      if (targetIndex < totalCards) {
-        result[targetIndex] = updatedCards[i];
-      }
+      if (targetIndex < totalCards) result[targetIndex] = updatedCards[i];
     }
     return result;
+  }
+
+  /// 7: 自動で4枚入れ替え
+  static Map<String, dynamic> applySevenEffect(List<dynamic> cards) {
+    List<dynamic> updatedCards = List.from(cards);
+    final random = Random();
+    List<int> availableIndices = [];
+    for (int i = 0; i < updatedCards.length; i++)
+      if (!updatedCards[i]['isTaken']) availableIndices.add(i);
+    if (availableIndices.length < 2)
+      return {'cards': updatedCards, 'targetIndices': []};
+    availableIndices.shuffle(random);
+    int count = min(availableIndices.length, 4);
+    List<int> targetIndices = availableIndices.sublist(0, count);
+    List<dynamic> targetData =
+        targetIndices.map((idx) => updatedCards[idx]).toList();
+    List<dynamic> shuffledData = List.from(targetData)..shuffle(random);
+    for (int i = 0; i < targetIndices.length; i++)
+      updatedCards[targetIndices[i]] = shuffledData[i];
+    return {'cards': updatedCards, 'targetIndices': targetIndices};
+  }
+
+  /// ★ 3, 8用: 指定された複数の位置を入れ替える
+  static List<dynamic> swapSpecificCards(
+      List<dynamic> cards, List<int> indices) {
+    List<dynamic> updatedCards = List.from(cards);
+    if (indices.length < 2) return updatedCards;
+    var firstData = updatedCards[indices[0]];
+    for (int i = 0; i < indices.length - 1; i++)
+      updatedCards[indices[i]] = updatedCards[indices[i + 1]];
+    updatedCards[indices.last] = firstData;
+    return updatedCards;
+  }
+
+  /// A, 6用: 透視インデックス取得
+  static List<int> getRandomRevealIndices(List<dynamic> cards, int count) {
+    List<int> availableIndices = [];
+    for (int i = 0; i < cards.length; i++) {
+      if (!cards[i]['isTaken'] && !cards[i]['isFaceUp'])
+        availableIndices.add(i);
+    }
+    availableIndices.shuffle();
+    return availableIndices.take(count).toList();
   }
 }
