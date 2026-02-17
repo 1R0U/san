@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // rootBundle用
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'online_game_screen.dart'; // さっき作ったファイルをインポート
+import 'online_game_screen.dart';
+import 'rule_screen.dart'; // ★追加: ルール画面をインポート
 
 class LobbyScreen extends StatefulWidget {
   const LobbyScreen({super.key});
@@ -71,8 +71,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
     tempPool.shuffle();
 
-    // 最大ターン数
-    const int maxTurns = 30;
+    // 最新のルール設定
+    const int maxTurns = 50; // ターン数を少し多めに設定
 
     await FirebaseFirestore.instance.collection('rooms').doc(roomId).set({
       'cards': tempPool,
@@ -84,6 +84,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
       'winner': 0,
       'createdAt': FieldValue.serverTimestamp(),
     });
+  }
+
+  // ★追加: ルール画面へ遷移する処理
+  void _goToRuleScreen() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const RuleScreen()),
+    );
   }
 
   @override
@@ -111,10 +119,37 @@ class _LobbyScreenState extends State<LobbyScreen> {
                       controller: _roomController,
                       decoration: const InputDecoration(labelText: "ルームID")),
                   const SizedBox(height: 20),
+
+                  // --- ゲーム開始ボタン ---
                   isLoading
                       ? const CircularProgressIndicator()
-                      : ElevatedButton(
-                          onPressed: _enterRoom, child: const Text("入室 / 作成")),
+                      : SizedBox(
+                          width: double.infinity, // 横幅いっぱいに
+                          child: ElevatedButton(
+                              onPressed: _enterRoom,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green, // ボタン色
+                                foregroundColor: Colors.white, // 文字色
+                              ),
+                              child: const Text("入室 / 作成")),
+                        ),
+
+                  const SizedBox(height: 15), // スペース
+
+                  // --- ★追加: ルール説明ボタン ---
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton(
+                      onPressed: _goToRuleScreen,
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Colors.green), // 枠線の色
+                      ),
+                      child: const Text("ルール説明",
+                          style: TextStyle(
+                              color: Colors.green,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                  ),
                 ],
               ),
             ),
