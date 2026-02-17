@@ -2,7 +2,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../widgets/card_mini.dart';
-import '../widgets/card_effects_widgets.dart'; // Q, J, 10, 9の特殊効果
+import '../widgets/game_effects.dart';
+import '../widgets/card_effects_widgets.dart';
 
 class OnlineGameScreen extends StatefulWidget {
   final String roomId;
@@ -34,15 +35,22 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
               body: Center(child: CircularProgressIndicator()));
         }
 
+        if (!snapshot.data!.exists) {
+          return const Scaffold(body: Center(child: Text("部屋が見つかりません")));
+        }
+
         final data = snapshot.data!.data() as Map<String, dynamic>;
-        final List<dynamic> cards = data['cards'];
-        final Map scores = data['scores'];
-        final int turn = data['currentTurn'];
+        final List<dynamic> cards = data['cards'] ?? [];
+        final Map scores = data['scores'] ?? {'1': 0, '2': 0};
+        final int turn = data['currentTurn'] ?? 1;
         final bool isMyTurn = (turn == widget.myPlayerId);
         final int currentTurnCount = data['turnCount'] ?? 1;
         final int maxTurns = data['maxTurns'] ?? 30;
 
-        // 勝者が決まったらリザルトを表示
+        // ★追加：Firestoreからハイライト情報を取得
+        final List<dynamic> rawHighlights = data['highlightedIndices'] ?? [];
+        final List<int> highlightedIndices = rawHighlights.cast<int>();
+
         if (data['winner'] != 0) {
           WidgetsBinding.instance
               .addPostFrameCallback((_) => _showResult(data['winner'], scores));
@@ -88,6 +96,8 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
                             card: cards[index],
                             isMyTurn: isMyTurn,
                             pColor: turn == 1 ? Colors.blue : Colors.red,
+                            // ★追加：このカードがハイライト対象か判定して渡す
+                            isHighlighted: highlightedIndices.contains(index),
                           ),
                         );
                       },
@@ -102,6 +112,7 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
     );
   }
 
+  // (_buildHeader, _scoreText, _getCardPoint は変更なし)
   Widget _buildHeader(bool isMyTurn, int turn, Map scores) {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
@@ -135,7 +146,8 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
     );
   }
 
-  int _getCardPoint(String rank) {
+  int _getCardPoint(String? rank) {
+    if (rank == null) return 0;
     switch (rank) {
       case 'A':
         return 1;
@@ -150,113 +162,141 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
     }
   }
 
-  // 勝利判定の共通ロジック
-  int _calculateWinner(bool allTaken, bool isLimitReached, Map scores) {
-    if (allTaken || isLimitReached) {
-      int s1 = scores['1'] ?? 0;
-      int s2 = scores['2'] ?? 0;
-      if (s1 > s2) return 1;
-      if (s2 > s1) return 2;
-      return 3; // 引き分け
-    }
-    return 0; // 継続
-  }
-
   Future<void> _handleTap(int index, Map<String, dynamic> data) async {
     if (_isProcessing || data['currentTurn'] != widget.myPlayerId) return;
 
-    List<dynamic> currentCards = List.from(data['cards']);
-    if (currentCards[index]['isFaceUp'] || currentCards[index]['isTaken'])
-      return;
+    List<dynamic> cards = List.from(data['cards']);
+
+    if (cards[index]['isFaceUp'] || cards[index]['isTaken']) return;
     if (data['winner'] != 0) return;
 
     setState(() => _isProcessing = true);
-    final docRef =
-        FirebaseFirestore.instance.collection('rooms').doc(widget.roomId);
-    int firstIdx = data['firstSelectedIndex'];
 
-    if (firstIdx == -1) {
-      // --- 1枚目の選択 ---
-      currentCards[index]['isFaceUp'] = true;
-      await docRef.update({'cards': currentCards, 'firstSelectedIndex': index});
-      _isProcessing = false;
-    } else {
-      // --- 2枚目の選択 ---
-      currentCards[index]['isFaceUp'] = true;
-      await docRef.update({'cards': currentCards});
+    try {
+      final docRef =
+          FirebaseFirestore.instance.collection('rooms').doc(widget.roomId);
+      int firstIdx = data['firstSelectedIndex'];
 
-      bool isMatch =
-          currentCards[firstIdx]['rank'] == currentCards[index]['rank'];
-      int currentTurnCount = (data['turnCount'] ?? 0) + 1;
-      int maxTurns = data['maxTurns'] ?? 30;
-      Map<String, dynamic> newScores = Map.from(data['scores']);
-
-      if (isMatch) {
-        // ==========================================
-        // ペア成立時
-        // ==========================================
-        await Future.delayed(const Duration(milliseconds: 600));
-        currentCards[firstIdx]['isTaken'] = true;
-        currentCards[index]['isTaken'] = true;
-
-        // スコア加算
-        int points = _getCardPoint(currentCards[index]['rank']);
-        int oldScore = newScores[widget.myPlayerId.toString()] ?? 0;
-        newScores[widget.myPlayerId.toString()] = oldScore + points;
-
-        // 特殊効果
-        String rank = currentCards[index]['rank'];
-        if (rank == 'Q') {
-          currentCards = GameEffects.applyQueenEffect(currentCards);
-        } else if (rank == 'J') {
-          currentCards = GameEffects.applyJackEffect(currentCards, 13);
-        } else if (rank == '10') {
-          currentCards = GameEffects.applyTenEffect(currentCards);
-        } else if (rank == '9') {
-          currentCards = GameEffects.applyNineEffect(currentCards, 13);
-        }
-
-        bool allTaken = currentCards.every((c) => c['isTaken']);
-        bool isLimitReached = currentTurnCount >= maxTurns;
-        int winner = _calculateWinner(allTaken, isLimitReached, newScores);
-
-        // 更新 (ペア成立時はターンを継続させるのが一般的)
-        await docRef.update({
-          'cards': currentCards,
-          'scores': newScores,
-          'firstSelectedIndex': -1,
-          'turnCount': currentTurnCount,
-          'winner': winner,
-          // ターンを交代させたい場合は 'currentTurn': widget.myPlayerId == 1 ? 2 : 1 を追加
-        });
+      if (firstIdx == -1) {
+        cards[index]['isFaceUp'] = true;
+        await docRef.update({'cards': cards, 'firstSelectedIndex': index});
+        _isProcessing = false;
       } else {
-        // ==========================================
-        // ペア不成立時
-        // ==========================================
-        await Future.delayed(const Duration(milliseconds: 1000));
-        currentCards[firstIdx]['isFaceUp'] = false;
-        currentCards[index]['isFaceUp'] = false;
+        cards[index]['isFaceUp'] = true;
+        await docRef.update({'cards': cards});
 
-        bool isLimitReached = currentTurnCount >= maxTurns;
-        int winner = _calculateWinner(false, isLimitReached, newScores);
+        String rank1 = cards[firstIdx]['rank'] ?? "";
+        String rank2 = cards[index]['rank'] ?? "";
+        bool isMatch = (rank1 == rank2) && (rank1 != "");
 
-        // ターンを交代
-        int nextTurn = widget.myPlayerId == 1 ? 2 : 1;
+        int currentTurnCount = (data['turnCount'] ?? 0) + 1;
+        int maxTurns = data['maxTurns'] ?? 30;
 
-        await docRef.update({
-          'cards': currentCards,
-          'firstSelectedIndex': -1,
-          'currentTurn': nextTurn,
-          'turnCount': currentTurnCount,
-          'winner': winner
-        });
+        if (isMatch) {
+          // ■ 正解
+          await Future.delayed(const Duration(milliseconds: 600));
+          cards[firstIdx]['isTaken'] = true;
+          cards[index]['isTaken'] = true;
+
+          int points = _getCardPoint(cards[index]['rank']);
+          int newScore =
+              (data['scores'][widget.myPlayerId.toString()] ?? 0) + points;
+
+          // ===============================================
+          // ★ 特殊効果の分岐
+          // ===============================================
+          String rank = cards[index]['rank'];
+          List<int> highlightIndices = []; // ★ハイライトする場所リスト
+
+          if (rank == 'Q') {
+            if (mounted) await showQueenEffect(context);
+            cards = GameEffectsLogic.applyQueenEffect(cards);
+          } else if (rank == 'J') {
+            if (mounted) await showJackEffect(context);
+            cards = GameEffectsLogic.applyJackEffect(cards);
+          } else if (rank == '10') {
+            if (mounted) await showTenEffect(context);
+            // ★修正: 戻り値が Map になったので受け取り方を変える
+            var result = GameEffectsLogic.applyTenEffect(cards);
+            cards = result['cards'];
+            highlightIndices = result['indices']; // 変更された場所を受け取る
+          } else if (rank == '9') {
+            if (mounted) await showNineEffect(context);
+            cards = GameEffectsLogic.applyNineEffect(cards);
+          }
+          // ===============================================
+
+          Map<String, dynamic> newScores = Map.from(data['scores']);
+          newScores[widget.myPlayerId.toString()] = newScore;
+
+          int winner = 0;
+          bool allTaken = cards.every((c) => c['isTaken']);
+          bool isLimitReached = currentTurnCount > maxTurns;
+          if (allTaken || isLimitReached) {
+            if (newScores['1'] > newScores['2'])
+              winner = 1;
+            else if (newScores['2'] > newScores['1'])
+              winner = 2;
+            else
+              winner = 3;
+          }
+
+          // ★ Firestore更新：ハイライト情報も含める
+          await docRef.update({
+            'cards': cards,
+            'scores': newScores,
+            'firstSelectedIndex': -1,
+            'turnCount': currentTurnCount,
+            'winner': winner,
+            'highlightedIndices': highlightIndices, // ★ここで保存
+          });
+
+          _isProcessing = false;
+
+          // ★追加：2秒後にハイライトを消す処理
+          if (highlightIndices.isNotEmpty) {
+            Future.delayed(const Duration(seconds: 2), () async {
+              // まだゲームが続いていれば消す
+              await docRef.update({'highlightedIndices': []});
+            });
+          }
+        } else {
+          // ■ 不正解（変更なし）
+          await Future.delayed(const Duration(milliseconds: 1000));
+          cards[firstIdx]['isFaceUp'] = false;
+          cards[index]['isFaceUp'] = false;
+
+          int winner = 0;
+          bool isLimitReached = currentTurnCount > maxTurns;
+          if (isLimitReached) {
+            int s1 = data['scores']['1'];
+            int s2 = data['scores']['2'];
+            if (s1 > s2)
+              winner = 1;
+            else if (s2 > s1)
+              winner = 2;
+            else
+              winner = 3;
+          }
+
+          await docRef.update({
+            'cards': cards,
+            'firstSelectedIndex': -1,
+            'currentTurn': widget.myPlayerId == 1 ? 2 : 1,
+            'turnCount': currentTurnCount,
+            'winner': winner
+          });
+          _isProcessing = false;
+        }
       }
-      _isProcessing = false;
+    } catch (e) {
+      debugPrint("エラーが発生しました: $e");
+      if (mounted) setState(() => _isProcessing = false);
     }
-    if (mounted) setState(() {});
   }
 
   void _showResult(int winner, Map scores) {
+    // (省略: 前回と同じ)
     String title = "";
     String msg = "";
 
