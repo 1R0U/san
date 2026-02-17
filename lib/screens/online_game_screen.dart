@@ -8,12 +8,8 @@ import '../widgets/card_effects_widgets.dart';
 class OnlineGameScreen extends StatefulWidget {
   final String roomId;
   final int myPlayerId;
-
-  const OnlineGameScreen({
-    super.key,
-    required this.roomId,
-    required this.myPlayerId,
-  });
+  const OnlineGameScreen(
+      {super.key, required this.roomId, required this.myPlayerId});
 
   @override
   State<OnlineGameScreen> createState() => _OnlineGameScreenState();
@@ -21,6 +17,55 @@ class OnlineGameScreen extends StatefulWidget {
 
 class _OnlineGameScreenState extends State<OnlineGameScreen> {
   bool _isProcessing = false;
+
+  // ★ 交換モード用変数
+  bool _isExchangeMode = false;
+  int _exchangeRequiredCount = 0;
+  List<int> _selectedForExchange = [];
+
+  // ★ 透視モード（一時的にめくる）用変数
+  List<int> _tempRevealedIndices = [];
+
+  // 9のエリア色分け
+  Color? _getNineZoneColor(int index) {
+    int crossAxisCount = 13;
+    int r = index ~/ crossAxisCount;
+    int c = index % crossAxisCount;
+    bool isTop = r < 2;
+    bool isLeft = c < 6;
+    if (isTop && isLeft) return Colors.cyanAccent;
+    if (isTop && !isLeft) return Colors.orangeAccent;
+    if (!isTop && isLeft) return Colors.purpleAccent;
+    if (!isTop && !isLeft) return Colors.greenAccent;
+    return null;
+  }
+
+  // ★ 交換モード開始
+  void _enterExchangeMode(int count) {
+    setState(() {
+      _isExchangeMode = true;
+      _exchangeRequiredCount = count;
+      _selectedForExchange = [];
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text("交換するカードを $count 枚選んでください")),
+    );
+  }
+
+  // ★ 透視モード開始（数秒だけめくる）
+  void _startReveal(List<int> indices) {
+    setState(() {
+      _tempRevealedIndices = indices;
+    });
+    // 3秒後に隠す
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) {
+        setState(() {
+          _tempRevealedIndices = [];
+        });
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -30,14 +75,11 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
           .doc(widget.roomId)
           .snapshots(),
       builder: (context, snapshot) {
-        if (!snapshot.hasData) {
+        if (!snapshot.hasData)
           return const Scaffold(
               body: Center(child: CircularProgressIndicator()));
-        }
-
-        if (!snapshot.data!.exists) {
+        if (!snapshot.data!.exists)
           return const Scaffold(body: Center(child: Text("部屋が見つかりません")));
-        }
 
         final data = snapshot.data!.data() as Map<String, dynamic>;
         final List<dynamic> cards = data['cards'] ?? [];
@@ -45,11 +87,10 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
         final int turn = data['currentTurn'] ?? 1;
         final bool isMyTurn = (turn == widget.myPlayerId);
         final int currentTurnCount = data['turnCount'] ?? 1;
-        final int maxTurns = data['maxTurns'] ?? 30;
-
-        // ★追加：Firestoreからハイライト情報を取得
+        // ハイライト情報
         final List<dynamic> rawHighlights = data['highlightedIndices'] ?? [];
         final List<int> highlightedIndices = rawHighlights.cast<int>();
+        final String? effectType = data['activeEffect'];
 
         if (data['winner'] != 0) {
           WidgetsBinding.instance
@@ -60,16 +101,23 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
           backgroundColor: const Color(0xFF0A3D14),
           appBar: AppBar(
             toolbarHeight: 50,
-            title: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text("Room: ${widget.roomId} (P${widget.myPlayerId})",
-                    style: const TextStyle(fontSize: 14)),
-                Text("Turn: $currentTurnCount / $maxTurns",
+            title: _isExchangeMode
+                ? Text(
+                    "あと ${_exchangeRequiredCount - _selectedForExchange.length} 枚選択中...",
                     style: const TextStyle(
-                        fontSize: 12, color: Colors.yellowAccent)),
-              ],
-            ),
+                        color: Colors.orangeAccent,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold))
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text("Room: ${widget.roomId} (P${widget.myPlayerId})",
+                          style: const TextStyle(fontSize: 14)),
+                      Text("Turn: $currentTurnCount",
+                          style: const TextStyle(
+                              fontSize: 12, color: Colors.yellowAccent)),
+                    ],
+                  ),
             backgroundColor: turn == 1 ? Colors.blue[900] : Colors.red[900],
           ),
           body: Column(
@@ -90,14 +138,30 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
                       ),
                       itemCount: cards.length,
                       itemBuilder: (context, index) {
+                        // --- 色決定ロジック ---
+                        Color? hColor;
+                        if (highlightedIndices.contains(index))
+                          hColor = Colors.yellowAccent;
+                        else if (effectType == 'nine')
+                          hColor = _getNineZoneColor(index);
+                        else if (_selectedForExchange.contains(index))
+                          hColor = Colors.redAccent; // 交換選択中
+                        else if (_tempRevealedIndices.contains(index))
+                          hColor = Colors.pinkAccent; // 透視中
+
+                        // --- 透視モード中は強制的に表にする ---
+                        Map displayCard = Map.from(cards[index]);
+                        if (_tempRevealedIndices.contains(index)) {
+                          displayCard['isFaceUp'] = true;
+                        }
+
                         return GestureDetector(
                           onTap: () => _handleTap(index, data),
                           child: CardMini(
-                            card: cards[index],
+                            card: displayCard, // 透視反映版を渡す
                             isMyTurn: isMyTurn,
                             pColor: turn == 1 ? Colors.blue : Colors.red,
-                            // ★追加：このカードがハイライト対象か判定して渡す
-                            isHighlighted: highlightedIndices.contains(index),
+                            highlightColor: hColor,
                           ),
                         );
                       },
@@ -122,10 +186,7 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
         children: [
           _scoreText(1, scores['1'], turn == 1),
           Text(isMyTurn ? "YOUR TURN" : "WAITING...",
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 12)),
+              style: const TextStyle(color: Colors.white, fontSize: 12)),
           _scoreText(2, scores['2'], turn == 2),
         ],
       ),
@@ -133,42 +194,62 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
   }
 
   Widget _scoreText(int id, int score, bool active) {
-    return Column(
-      children: [
-        Text("P$id",
-            style: TextStyle(color: active ? Colors.white : Colors.white38)),
-        Text("$score pt",
-            style: TextStyle(
-                color: active ? Colors.white : Colors.white38,
-                fontWeight: FontWeight.bold,
-                fontSize: 18)),
-      ],
-    );
+    return Column(children: [
+      Text("P$id",
+          style: TextStyle(color: active ? Colors.white : Colors.white38)),
+      Text("$score pt",
+          style: TextStyle(
+              color: active ? Colors.white : Colors.white38,
+              fontSize: 18,
+              fontWeight: FontWeight.bold)),
+    ]);
   }
 
   int _getCardPoint(String? rank) {
     if (rank == null) return 0;
-    switch (rank) {
-      case 'A':
-        return 1;
-      case 'J':
-        return 11;
-      case 'Q':
-        return 12;
-      case 'K':
-        return 13;
-      default:
-        return int.tryParse(rank) ?? 0;
-    }
+    if (rank == 'A') return 1;
+    if (rank == 'J') return 11;
+    if (rank == 'Q') return 12;
+    if (rank == 'K') return 13;
+    return int.tryParse(rank) ?? 0;
   }
 
   Future<void> _handleTap(int index, Map<String, dynamic> data) async {
-    if (_isProcessing || data['currentTurn'] != widget.myPlayerId) return;
-
-    List<dynamic> cards = List.from(data['cards']);
-
-    if (cards[index]['isFaceUp'] || cards[index]['isTaken']) return;
     if (data['winner'] != 0) return;
+
+    // --- ★ 交換モード中の処理 ---
+    if (_isExchangeMode) {
+      if (_selectedForExchange.contains(index)) return; // 既に選んだカード
+
+      setState(() {
+        _selectedForExchange.add(index);
+      });
+
+      if (_selectedForExchange.length >= _exchangeRequiredCount) {
+        // 必要枚数選んだら実行
+        setState(() => _isProcessing = true);
+        final docRef =
+            FirebaseFirestore.instance.collection('rooms').doc(widget.roomId);
+        List<dynamic> cards = List.from(data['cards']);
+
+        // 交換実行
+        cards = GameEffectsLogic.swapSpecificCards(cards, _selectedForExchange);
+
+        await docRef.update({'cards': cards});
+
+        setState(() {
+          _isExchangeMode = false;
+          _selectedForExchange = [];
+          _isProcessing = false;
+        });
+      }
+      return;
+    }
+
+    // --- 通常のタップ処理 ---
+    if (_isProcessing || data['currentTurn'] != widget.myPlayerId) return;
+    List<dynamic> cards = List.from(data['cards']);
+    if (cards[index]['isFaceUp'] || cards[index]['isTaken']) return;
 
     setState(() => _isProcessing = true);
 
@@ -193,7 +274,6 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
         int maxTurns = data['maxTurns'] ?? 30;
 
         if (isMatch) {
-          // ■ 正解
           await Future.delayed(const Duration(milliseconds: 600));
           cards[firstIdx]['isTaken'] = true;
           cards[index]['isTaken'] = true;
@@ -203,10 +283,11 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
               (data['scores'][widget.myPlayerId.toString()] ?? 0) + points;
 
           // ===============================================
-          // ★ 特殊効果の分岐
+          // ★ 特殊効果の全部分岐 (Q, J, 10, 9, 8, 7, 6, 3, A)
           // ===============================================
           String rank = cards[index]['rank'];
-          List<int> highlightIndices = []; // ★ハイライトする場所リスト
+          List<int> highlightIndices = [];
+          String? activeEffect;
 
           if (rank == 'Q') {
             if (mounted) await showQueenEffect(context);
@@ -216,13 +297,30 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
             cards = GameEffectsLogic.applyJackEffect(cards);
           } else if (rank == '10') {
             if (mounted) await showTenEffect(context);
-            // ★修正: 戻り値が Map になったので受け取り方を変える
             var result = GameEffectsLogic.applyTenEffect(cards);
             cards = result['cards'];
-            highlightIndices = result['indices']; // 変更された場所を受け取る
+            highlightIndices = result['indices'];
           } else if (rank == '9') {
             if (mounted) await showNineEffect(context);
             cards = GameEffectsLogic.applyNineEffect(cards);
+            activeEffect = 'nine';
+          } else if (rank == '8') {
+            _enterExchangeMode(2); // 8: 2枚交換
+          } else if (rank == '7') {
+            var result = GameEffectsLogic.applySevenEffect(cards);
+            // cards = result['cards']; // 7はカード位置を変えないなら不要
+            List<int> targets = List<int>.from(result['targetIndices']);
+            _startReveal(targets);
+          } else if (rank == '6') {
+            List<int> targets =
+                GameEffectsLogic.getRandomRevealIndices(cards, 3);
+            _startReveal(targets);
+          } else if (rank == '3') {
+            _enterExchangeMode(4); // 3: 4枚交換
+          } else if (rank == 'A') {
+            List<int> targets =
+                GameEffectsLogic.getRandomRevealIndices(cards, 8);
+            _startReveal(targets);
           }
           // ===============================================
 
@@ -241,27 +339,27 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
               winner = 3;
           }
 
-          // ★ Firestore更新：ハイライト情報も含める
           await docRef.update({
             'cards': cards,
             'scores': newScores,
             'firstSelectedIndex': -1,
             'turnCount': currentTurnCount,
             'winner': winner,
-            'highlightedIndices': highlightIndices, // ★ここで保存
+            'highlightedIndices': highlightIndices,
+            'activeEffect': activeEffect,
           });
 
           _isProcessing = false;
 
-          // ★追加：2秒後にハイライトを消す処理
-          if (highlightIndices.isNotEmpty) {
+          // エフェクト消去
+          if (highlightIndices.isNotEmpty || activeEffect != null) {
             Future.delayed(const Duration(seconds: 2), () async {
-              // まだゲームが続いていれば消す
-              await docRef.update({'highlightedIndices': []});
+              await docRef
+                  .update({'highlightedIndices': [], 'activeEffect': null});
             });
           }
         } else {
-          // ■ 不正解（変更なし）
+          // ■ 不正解
           await Future.delayed(const Duration(milliseconds: 1000));
           cards[firstIdx]['isFaceUp'] = false;
           cards[index]['isFaceUp'] = false;
@@ -296,10 +394,8 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
   }
 
   void _showResult(int winner, Map scores) {
-    // (省略: 前回と同じ)
     String title = "";
     String msg = "";
-
     if (winner == 3) {
       title = "DRAW";
       msg = "引き分けです！\nScore: ${scores['1']} - ${scores['2']}";
@@ -323,10 +419,10 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
         content: Text(msg, textAlign: TextAlign.center),
         actions: [
           Center(
-            child: TextButton(
-                onPressed: () => Navigator.popUntil(context, (r) => r.isFirst),
-                child: const Text("ロビーに戻る")),
-          ),
+              child: TextButton(
+                  onPressed: () =>
+                      Navigator.popUntil(context, (r) => r.isFirst),
+                  child: const Text("ロビーに戻る"))),
         ],
       ),
     );

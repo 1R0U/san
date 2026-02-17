@@ -29,15 +29,10 @@ class GameEffectsLogic {
 
     List<dynamic> updatedCards = List.from(cards);
     if (updatedCards.length <= crossAxisCount) return updatedCards;
-
-    // 最後の1行分（後ろから13枚）を切り取る
     List<dynamic> lastRow =
         updatedCards.sublist(updatedCards.length - crossAxisCount);
-    // 残りの部分を切り取る
     List<dynamic> remaining =
         updatedCards.sublist(0, updatedCards.length - crossAxisCount);
-
-    // [最後の一行] + [残りの部分] の順で結合
     return [...lastRow, ...remaining];
   }
 
@@ -91,7 +86,6 @@ class GameEffectsLogic {
     int midCol = crossAxisCount ~/ 2;
 
     List<dynamic> result = List.from(updatedCards);
-
     for (int i = 0; i < totalCards; i++) {
       int r = i ~/ crossAxisCount;
       int c = i % crossAxisCount;
@@ -118,5 +112,48 @@ class GameEffectsLogic {
       }
     }
     return result;
+  }
+
+  /// 7: 自動で4枚入れ替え
+  static Map<String, dynamic> applySevenEffect(List<dynamic> cards) {
+    List<dynamic> updatedCards = List.from(cards);
+    final random = Random();
+    List<int> availableIndices = [];
+    for (int i = 0; i < updatedCards.length; i++)
+      if (!updatedCards[i]['isTaken']) availableIndices.add(i);
+    if (availableIndices.length < 2)
+      return {'cards': updatedCards, 'targetIndices': []};
+    availableIndices.shuffle(random);
+    int count = min(availableIndices.length, 4);
+    List<int> targetIndices = availableIndices.sublist(0, count);
+    List<dynamic> targetData =
+        targetIndices.map((idx) => updatedCards[idx]).toList();
+    List<dynamic> shuffledData = List.from(targetData)..shuffle(random);
+    for (int i = 0; i < targetIndices.length; i++)
+      updatedCards[targetIndices[i]] = shuffledData[i];
+    return {'cards': updatedCards, 'targetIndices': targetIndices};
+  }
+
+  /// ★ 3, 8用: 指定された複数の位置を入れ替える
+  static List<dynamic> swapSpecificCards(
+      List<dynamic> cards, List<int> indices) {
+    List<dynamic> updatedCards = List.from(cards);
+    if (indices.length < 2) return updatedCards;
+    var firstData = updatedCards[indices[0]];
+    for (int i = 0; i < indices.length - 1; i++)
+      updatedCards[indices[i]] = updatedCards[indices[i + 1]];
+    updatedCards[indices.last] = firstData;
+    return updatedCards;
+  }
+
+  /// A, 6用: 透視インデックス取得
+  static List<int> getRandomRevealIndices(List<dynamic> cards, int count) {
+    List<int> availableIndices = [];
+    for (int i = 0; i < cards.length; i++) {
+      if (!cards[i]['isTaken'] && !cards[i]['isFaceUp'])
+        availableIndices.add(i);
+    }
+    availableIndices.shuffle();
+    return availableIndices.take(count).toList();
   }
 }
