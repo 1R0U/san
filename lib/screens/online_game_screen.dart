@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../widgets/card_mini.dart'; // さっき作ったファイルをインポート
+import '../widgets/card_mini.dart';
+import '../widgets/card_effects_widgets.dart'; // Qの特殊効果を適用するためのクラスをインポート
 
 class OnlineGameScreen extends StatefulWidget {
   final String roomId;
@@ -41,6 +42,7 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
         final int currentTurnCount = data['turnCount'] ?? 1;
         final int maxTurns = data['maxTurns'] ?? 30;
 
+        // 勝者が決まったらリザルトを表示
         if (data['winner'] != 0) {
           WidgetsBinding.instance
               .addPostFrameCallback((_) => _showResult(data['winner'], scores));
@@ -83,7 +85,6 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
                         return GestureDetector(
                           onTap: () => _handleTap(index, data),
                           child: CardMini(
-                            // 修正: _CardMini -> CardMini
                             card: cards[index],
                             isMyTurn: isMyTurn,
                             pColor: turn == 1 ? Colors.blue : Colors.red,
@@ -151,9 +152,12 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
 
   Future<void> _handleTap(int index, Map<String, dynamic> data) async {
     if (_isProcessing || data['currentTurn'] != widget.myPlayerId) return;
-    final cards = List.from(data['cards']);
-    if (cards[index]['isFaceUp'] || cards[index]['isTaken']) return;
 
+    // 現在のカード状態をコピー
+    List<dynamic> currentCards = List.from(data['cards']);
+
+    if (currentCards[index]['isFaceUp'] || currentCards[index]['isTaken'])
+      return;
     if (data['winner'] != 0) return;
 
     setState(() => _isProcessing = true);
@@ -162,83 +166,105 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
     int firstIdx = data['firstSelectedIndex'];
 
     if (firstIdx == -1) {
-      cards[index]['isFaceUp'] = true;
-      await docRef.update({'cards': cards, 'firstSelectedIndex': index});
+      // 1枚目の選択
+      currentCards[index]['isFaceUp'] = true;
+      await docRef.update({'cards': currentCards, 'firstSelectedIndex': index});
       _isProcessing = false;
     } else {
-      cards[index]['isFaceUp'] = true;
-      await docRef.update({'cards': cards});
+      // 2枚目の選択
+      currentCards[index]['isFaceUp'] = true;
+      await docRef.update({'cards': currentCards});
 
-      bool isMatch = cards[firstIdx]['rank'] == cards[index]['rank'];
+      bool isMatch =
+          currentCards[firstIdx]['rank'] == currentCards[index]['rank'];
       int currentTurnCount = (data['turnCount'] ?? 0) + 1;
       int maxTurns = data['maxTurns'] ?? 30;
 
       if (isMatch) {
+        // --- ペア成立時 ---
         await Future.delayed(const Duration(milliseconds: 600));
-        cards[firstIdx]['isTaken'] = true;
-        cards[index]['isTaken'] = true;
+        currentCards[firstIdx]['isTaken'] = true;
+        currentCards[index]['isTaken'] = true;
 
-        int points = _getCardPoint(cards[index]['rank']);
-        int newScore =
-            (data['scores'][widget.myPlayerId.toString()] ?? 0) + points;
-
-        if (cards[index]['rank'] == 'Q') {
-          if (cards.isNotEmpty) {
-            var last = cards.removeLast();
-            cards.insert(0, last);
-          }
-        }
-
+        // スコア加算
+        int points = _getCardPoint(currentCards[index]['rank']);
         Map<String, dynamic> newScores = Map.from(data['scores']);
-        newScores[widget.myPlayerId.toString()] = newScore;
+        int oldScore = newScores[widget.myPlayerId.toString()] ?? 0;
+        newScores[widget.myPlayerId.toString()] = oldScore + points;
 
-        bool allTaken = cards.every((c) => c['isTaken']);
-        bool isLimitReached = currentTurnCount > maxTurns;
+// --- _handleTap メソッド内の特殊効果判定部分 ---
 
-        int winner = 0;
-        if (allTaken || isLimitReached) {
-          if (newScores['1'] > newScores['2'])
-            winner = 1;
-          else if (newScores['2'] > newScores['1'])
-            winner = 2;
-          else
-            winner = 3;
+        if (isMatch) {
+          // (スコア計算などの後)
+
+          String rank = currentCards[index]['rank'];
+
+          if (rank == 'Q') {
+            // Q: 全体を1つ右にずらす
+            currentCards = GameEffects.applyQueenEffect(currentCards);
+          } else if (rank == 'J') {
+            // J: タップした列を縦にスライド
+            currentCards = GameEffects.applyJackEffect(currentCards, 13);
+          } else if (rank == '10') {
+            // 10: 裏返しのカード10枚をランダムシャッフル
+            currentCards = GameEffects.applyTenEffect(currentCards);
+          } else if (rank == '9') {
+            // 9: 4ブロック対角入れ替え
+            currentCards = GameEffects.applyNineEffect(currentCards, 13);
+          }
+
+          // 終了判定
+          bool allTaken = currentCards.every((c) => c['isTaken']);
+          bool isLimitReached = currentTurnCount >= maxTurns;
+
+          int winner = 0;
+          if (allTaken || isLimitReached) {
+            int s1 = newScores['1'];
+            int s2 = newScores['2'];
+            if (s1 > s2)
+              winner = 1;
+            else if (s2 > s1)
+              winner = 2;
+            else
+              winner = 3;
+          }
+
+          await docRef.update({
+            'cards': currentCards,
+            'scores': newScores,
+            'firstSelectedIndex': -1,
+            'turnCount': currentTurnCount,
+            'winner': winner
+          });
+          _isProcessing = false;
+        } else {
+          // --- 不一致時 ---
+          await Future.delayed(const Duration(milliseconds: 1000));
+          currentCards[firstIdx]['isFaceUp'] = false;
+          currentCards[index]['isFaceUp'] = false;
+
+          bool isLimitReached = currentTurnCount >= maxTurns;
+          int winner = 0;
+          if (isLimitReached) {
+            int s1 = data['scores']['1'];
+            int s2 = data['scores']['2'];
+            if (s1 > s2)
+              winner = 1;
+            else if (s2 > s1)
+              winner = 2;
+            else
+              winner = 3;
+          }
+
+          await docRef.update({
+            'cards': currentCards,
+            'firstSelectedIndex': -1,
+            'currentTurn': widget.myPlayerId == 1 ? 2 : 1,
+            'turnCount': currentTurnCount,
+            'winner': winner
+          });
+          _isProcessing = false;
         }
-
-        await docRef.update({
-          'cards': cards,
-          'scores': newScores,
-          'firstSelectedIndex': -1,
-          'turnCount': currentTurnCount,
-          'winner': winner
-        });
-        _isProcessing = false;
-      } else {
-        await Future.delayed(const Duration(milliseconds: 1000));
-        cards[firstIdx]['isFaceUp'] = false;
-        cards[index]['isFaceUp'] = false;
-
-        bool isLimitReached = currentTurnCount > maxTurns;
-        int winner = 0;
-        if (isLimitReached) {
-          int s1 = data['scores']['1'];
-          int s2 = data['scores']['2'];
-          if (s1 > s2)
-            winner = 1;
-          else if (s2 > s1)
-            winner = 2;
-          else
-            winner = 3;
-        }
-
-        await docRef.update({
-          'cards': cards,
-          'firstSelectedIndex': -1,
-          'currentTurn': widget.myPlayerId == 1 ? 2 : 1,
-          'turnCount': currentTurnCount,
-          'winner': winner
-        });
-        _isProcessing = false;
       }
     }
     if (mounted) setState(() {});
@@ -272,10 +298,10 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
         content: Text(msg, textAlign: TextAlign.center),
         actions: [
           Center(
-              child: TextButton(
-                  onPressed: () =>
-                      Navigator.popUntil(context, (r) => r.isFirst),
-                  child: const Text("ロビーに戻る"))),
+            child: TextButton(
+                onPressed: () => Navigator.popUntil(context, (r) => r.isFirst),
+                child: const Text("ロビーに戻る")),
+          ),
         ],
       ),
     );
