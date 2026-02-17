@@ -1,7 +1,5 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'firebase_options.dart';
@@ -18,7 +16,7 @@ void main() async {
 }
 
 // ---------------------------------------------------
-// 1. ロビー画面（部屋作成・入室）
+// 1. ロビー画面
 // ---------------------------------------------------
 class LobbyScreen extends StatefulWidget {
   const LobbyScreen({super.key});
@@ -34,20 +32,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
   void _enterRoom() async {
     final roomId = _roomController.text.trim();
     if (roomId.isEmpty) return;
-
     setState(() => isLoading = true);
 
     try {
       final docRef = FirebaseFirestore.instance.collection('rooms').doc(roomId);
       final docSnapshot = await docRef.get();
 
-      int myPlayerId;
-      if (!docSnapshot.exists) {
-        await _createRoom(roomId);
-        myPlayerId = 1;
-      } else {
-        myPlayerId = 2;
-      }
+      int myPlayerId = docSnapshot.exists ? 2 : 1;
+      if (!docSnapshot.exists) await _createRoom(roomId);
 
       if (!mounted) return;
       Navigator.push(
@@ -66,33 +58,35 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   Future<void> _createRoom(String roomId) async {
-    final String response = await rootBundle.loadString('assets/cards.json');
-    final data = json.decode(response);
-    List<Map<String, dynamic>> tempPool = [];
-    List<String> allGenres = [];
+    final suits = ['♠', '♥', '♦', '♣'];
+    final ranks = [
+      'A',
+      '2',
+      '3',
+      '4',
+      '5',
+      '6',
+      '7',
+      '8',
+      '9',
+      '10',
+      'J',
+      'Q',
+      'K'
+    ];
 
-    for (var cat in data['categories']) {
-      allGenres.add(cat['genre']);
-      for (var item in cat['items']) {
-        tempPool.add({
-          'text': item,
-          'genre': cat['genre'],
-          'isFaceUp': false,
-          'isTaken': false,
-          'takenBy': 0,
-        });
+    List<Map<String, dynamic>> tempPool = [];
+    for (var suit in suits) {
+      for (var rank in ranks) {
+        tempPool.add(
+            {'rank': rank, 'suit': suit, 'isFaceUp': false, 'isTaken': false});
       }
     }
-
-    allGenres.shuffle();
     tempPool.shuffle();
 
     await FirebaseFirestore.instance.collection('rooms').doc(roomId).set({
       'cards': tempPool,
-      'targets': {
-        '1': allGenres[0],
-        '2': allGenres[1],
-      },
+      'firstSelectedIndex': -1,
       'scores': {'1': 0, '2': 0},
       'currentTurn': 1,
       'winner': 0,
@@ -103,50 +97,34 @@ class _LobbyScreenState extends State<LobbyScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.blueGrey[50],
+      backgroundColor: Colors.green[900],
       body: Center(
-        child: Card(
-          elevation: 8,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          margin: const EdgeInsets.all(24),
-          child: Padding(
-            padding: const EdgeInsets.all(40),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.style, size: 64, color: Colors.blueGrey),
-                const SizedBox(height: 16),
-                const Text("オンライン神経衰弱",
-                    style:
-                        TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 32),
-                SizedBox(
-                  width: 300,
-                  child: TextField(
-                    controller: _roomController,
-                    decoration: const InputDecoration(
-                      labelText: "ルームIDを入力",
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.meeting_room),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                isLoading
-                    ? const CircularProgressIndicator()
-                    : ElevatedButton(
-                        onPressed: _enterRoom,
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 50, vertical: 18),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(30)),
-                        ),
-                        child: const Text("入室 / 作成",
-                            style: TextStyle(fontSize: 18)),
-                      ),
-              ],
+        child: SingleChildScrollView(
+          child: Card(
+            margin: const EdgeInsets.all(20),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            child: Padding(
+              padding: const EdgeInsets.all(30),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.grid_view, size: 60, color: Colors.green),
+                  const SizedBox(height: 10),
+                  const Text("52枚フルデッキ対戦",
+                      style:
+                          TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 20),
+                  TextField(
+                      controller: _roomController,
+                      decoration: const InputDecoration(labelText: "ルームID")),
+                  const SizedBox(height: 20),
+                  isLoading
+                      ? const CircularProgressIndicator()
+                      : ElevatedButton(
+                          onPressed: _enterRoom, child: const Text("入室 / 作成")),
+                ],
+              ),
             ),
           ),
         ),
@@ -156,12 +134,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
 }
 
 // ---------------------------------------------------
-// 2. ゲーム画面
+// 2. ゲーム画面 (52枚スクロールなし)
 // ---------------------------------------------------
 class OnlineGameScreen extends StatefulWidget {
   final String roomId;
   final int myPlayerId;
-
   const OnlineGameScreen(
       {super.key, required this.roomId, required this.myPlayerId});
 
@@ -183,135 +160,55 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
         if (!snapshot.hasData)
           return const Scaffold(
               body: Center(child: CircularProgressIndicator()));
-        if (!snapshot.data!.exists)
-          return const Scaffold(body: Center(child: Text("部屋が削除されました")));
-
         final data = snapshot.data!.data() as Map<String, dynamic>;
         final List<dynamic> cards = data['cards'];
-        final Map<String, dynamic> targets = data['targets'];
-        final Map<String, dynamic> scores = data['scores'];
-        final int currentTurn = data['currentTurn'] ?? 1;
-        final int winner = data['winner'] ?? 0;
+        final Map scores = data['scores'];
+        final int turn = data['currentTurn'];
+        final bool isMyTurn = (turn == widget.myPlayerId);
 
-        // 【プロ演出】現在のターンのプレイヤー色（P1:青, P2:赤）
-        final Color turnColor = currentTurn == 1 ? Colors.blue : Colors.red;
-        final bool isMyTurn = (currentTurn == widget.myPlayerId);
-
-        if (winner != 0) {
+        if (data['winner'] != 0) {
           WidgetsBinding.instance
-              .addPostFrameCallback((_) => _showResultDialog(winner));
+              .addPostFrameCallback((_) => _showResult(data['winner'], scores));
         }
 
         return Scaffold(
-          backgroundColor: const Color(0xFFF5F5F5),
+          backgroundColor: const Color(0xFF0A3D14),
           appBar: AppBar(
-            title: Text("部屋: ${widget.roomId} (P${widget.myPlayerId})"),
-            backgroundColor: turnColor, // 手番の色に連動
-            foregroundColor: Colors.white,
-            elevation: 0,
+            toolbarHeight: 40,
+            title: Text("P${widget.myPlayerId} 部屋:${widget.roomId}",
+                style: const TextStyle(fontSize: 14)),
+            backgroundColor: turn == 1 ? Colors.blue[900] : Colors.red[900],
           ),
           body: Column(
             children: [
-              // ターンインジケーター
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                decoration: BoxDecoration(
-                  color: turnColor,
-                  boxShadow: const [
-                    BoxShadow(
-                        color: Colors.black12,
-                        blurRadius: 4,
-                        offset: Offset(0, 2))
-                  ],
-                ),
-                child: Text(
-                  isMyTurn ? "★ あなたの番です ★" : "相手（P$currentTurn）が選び中...",
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white),
-                ),
-              ),
-
-              // スコアボード
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Row(
-                  children: [
-                    Expanded(
-                        child: _playerInfo(
-                            1, targets['1'], scores['1'], currentTurn == 1)),
-                    const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 12),
-                      child: Text("VS",
-                          style: TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.w900,
-                              color: Colors.black26)),
-                    ),
-                    Expanded(
-                        child: _playerInfo(
-                            2, targets['2'], scores['2'], currentTurn == 2)),
-                  ],
-                ),
-              ),
-
-              // カードグリッド（5x5 スクロールなし修正版）
+              _buildHeader(isMyTurn, turn, scores),
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  // LayoutBuilderを使って利用可能なサイズを取得
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      const int crossAxisCount = 5; // 5列
-                      const double spacing = 10.0; // カード間の隙間
-
-                      // 隙間の合計を引いて、1枚あたりの幅と高さを計算
-                      // 横幅 = (全体の幅 - (隙間 * 4)) / 5
-                      final double itemWidth = (constraints.maxWidth -
-                              (spacing * (crossAxisCount - 1))) /
-                          crossAxisCount;
-                      // 高さ = (全体の高さ - (隙間 * 4)) / 5
-                      final double itemHeight = (constraints.maxHeight -
-                              (spacing * (crossAxisCount - 1))) /
-                          crossAxisCount;
-
-                      // 縦横比（アスペクト比）を計算
-                      // GridViewにこれを渡すことで、高さに合わせてカードが伸縮する
-                      final double childAspectRatio = itemWidth / itemHeight;
-
-                      return GridView.builder(
-                        // ★ここが重要：スクロールを無効化
-                        physics: const NeverScrollableScrollPhysics(),
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: crossAxisCount,
-                          mainAxisSpacing: spacing,
-                          crossAxisSpacing: spacing,
-                          childAspectRatio: childAspectRatio, // 計算した比率を適用
-                        ),
-                        itemCount: cards.length,
-                        itemBuilder: (context, index) {
-                          final card = cards[index];
-                          final bool isTaken = card['isTaken'] ?? false;
-                          final bool isFaceUp = card['isFaceUp'] ?? false;
-
-                          return Opacity(
-                            opacity: isTaken ? 0.3 : 1.0,
-                            child: GestureDetector(
-                              onTap: () {
-                                if (isTaken || isFaceUp || !isMyTurn) return;
-                                _handleTap(index, data, widget.myPlayerId);
-                              },
-                              child: _buildCard(card['text'], isFaceUp, isTaken,
-                                  card['takenBy'], currentTurn),
-                            ),
-                          );
-                        },
-                      );
-                    },
-                  ),
+                  padding: const EdgeInsets.all(4.0),
+                  child: LayoutBuilder(builder: (context, constraints) {
+                    // 13列 × 4行 = 52枚
+                    return GridView.builder(
+                      physics: const NeverScrollableScrollPhysics(),
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 13,
+                        mainAxisSpacing: 2,
+                        crossAxisSpacing: 2,
+                        childAspectRatio: 0.8, // 縦長のカード
+                      ),
+                      itemCount: cards.length,
+                      itemBuilder: (context, index) {
+                        return GestureDetector(
+                          onTap: () => _handleTap(index, data),
+                          child: _CardMini(
+                            card: cards[index],
+                            isMyTurn: isMyTurn,
+                            pColor: turn == 1 ? Colors.blue : Colors.red,
+                          ),
+                        );
+                      },
+                    );
+                  }),
                 ),
               ),
             ],
@@ -321,157 +218,142 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
     );
   }
 
-  void _showResultDialog(int winner) {
+  Widget _buildHeader(bool isMyTurn, int turn, Map scores) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+      color: Colors.black26,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          _scoreText(1, scores['1'], turn == 1),
+          Text(isMyTurn ? "YOUR TURN" : "WAITING...",
+              style: const TextStyle(
+                  color: Colors.yellow,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12)),
+          _scoreText(2, scores['2'], turn == 2),
+        ],
+      ),
+    );
+  }
+
+  Widget _scoreText(int id, int score, bool active) {
+    return Text("P$id: $score",
+        style: TextStyle(
+            color: active ? Colors.white : Colors.white38,
+            fontWeight: active ? FontWeight.bold : FontWeight.normal));
+  }
+
+  Future<void> _handleTap(int index, Map<String, dynamic> data) async {
+    if (_isProcessing || data['currentTurn'] != widget.myPlayerId) return;
+    final cards = List.from(data['cards']);
+    if (cards[index]['isFaceUp'] || cards[index]['isTaken']) return;
+
+    setState(() => _isProcessing = true);
+    final docRef =
+        FirebaseFirestore.instance.collection('rooms').doc(widget.roomId);
+    int firstIdx = data['firstSelectedIndex'];
+
+    if (firstIdx == -1) {
+      cards[index]['isFaceUp'] = true;
+      await docRef.update({'cards': cards, 'firstSelectedIndex': index});
+      _isProcessing = false;
+    } else {
+      cards[index]['isFaceUp'] = true;
+      await docRef.update({'cards': cards});
+
+      if (cards[firstIdx]['rank'] == cards[index]['rank']) {
+        await Future.delayed(const Duration(milliseconds: 600));
+        cards[firstIdx]['isTaken'] = true;
+        cards[index]['isTaken'] = true;
+        int newScore = (data['scores'][widget.myPlayerId.toString()] ?? 0) + 1;
+        Map<String, dynamic> newScores = Map.from(data['scores']);
+        newScores[widget.myPlayerId.toString()] = newScore;
+        bool done = cards.every((c) => c['isTaken']);
+        await docRef.update({
+          'cards': cards,
+          'scores': newScores,
+          'firstSelectedIndex': -1,
+          'winner': done ? (newScores['1'] > newScores['2'] ? 1 : 2) : 0
+        });
+        _isProcessing = false;
+      } else {
+        await Future.delayed(const Duration(milliseconds: 1000));
+        cards[firstIdx]['isFaceUp'] = false;
+        cards[index]['isFaceUp'] = false;
+        await docRef.update({
+          'cards': cards,
+          'firstSelectedIndex': -1,
+          'currentTurn': widget.myPlayerId == 1 ? 2 : 1
+        });
+        _isProcessing = false;
+      }
+    }
+    if (mounted) setState(() {});
+  }
+
+  void _showResult(int winner, Map scores) {
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        title: Text(winner == widget.myPlayerId ? "🎉 勝利！" : "💀 敗北...",
-            textAlign: TextAlign.center),
-        content: Text(winner == widget.myPlayerId
-            ? "おめでとうございます！\nターゲットをすべて集めました！"
-            : "残念！相手が先に揃えました。"),
+        title: const Text("Game Over"),
+        content: Text(
+            "Winner: Player $winner\nScore: ${scores['1']} - ${scores['2']}"),
         actions: [
-          Center(
-            child: ElevatedButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                Navigator.of(context).pop();
-              },
-              child: const Text("ロビーに戻る"),
-            ),
-          ),
+          TextButton(
+              onPressed: () => Navigator.popUntil(context, (r) => r.isFirst),
+              child: const Text("Lobby"))
         ],
       ),
     );
   }
+}
 
-  Widget _playerInfo(int pNum, String target, int score, bool isTurn) {
-    Color color = pNum == 1 ? Colors.blue : Colors.red;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: isTurn ? color.withOpacity(0.1) : Colors.white,
-        border: Border.all(
-            color: isTurn ? color : Colors.black12, width: isTurn ? 4 : 1),
-        borderRadius: BorderRadius.circular(15),
-        boxShadow: isTurn
-            ? [BoxShadow(color: color.withOpacity(0.3), blurRadius: 8)]
-            : [],
-      ),
-      child: Column(
-        children: [
-          Text("P$pNum: $target",
-              style: TextStyle(
-                  fontWeight: FontWeight.bold, color: color, fontSize: 16)),
-          const SizedBox(height: 4),
-          Text("$score / 5",
-              style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: isTurn ? color : Colors.black54)),
-        ],
-      ),
-    );
-  }
+// ---------------------------------------------------
+// 3. 超小型カードウィジェット
+// ---------------------------------------------------
+class _CardMini extends StatelessWidget {
+  final Map card;
+  final bool isMyTurn;
+  final Color pColor;
 
-  Widget _buildCard(
-      String text, bool isFaceUp, bool isTaken, int takenBy, int currentTurn) {
-    Color cardColor;
-    if (isTaken) {
-      cardColor = takenBy == 1 ? Colors.blue[100]! : Colors.red[100]!;
-    } else if (isFaceUp) {
-      cardColor = Colors.white;
-    } else {
-      // カードの裏面を手番の色に連動
-      cardColor = currentTurn == 1 ? Colors.blue[300]! : Colors.red[300]!;
-    }
+  const _CardMini(
+      {required this.card, required this.isMyTurn, required this.pColor});
+
+  @override
+  Widget build(BuildContext context) {
+    if (card['isTaken']) return const SizedBox.shrink();
+
+    bool isFaceUp = card['isFaceUp'];
+    String suit = card['suit'];
+    String rank = card['rank'];
+    bool isRed = (suit == '♥' || suit == '♦');
 
     return Container(
-      alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: cardColor,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: const [
-          BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 2))
-        ],
-        border:
-            isFaceUp ? Border.all(color: Colors.orangeAccent, width: 4) : null,
+        color: isFaceUp ? Colors.white : pColor.withOpacity(0.8),
+        borderRadius: BorderRadius.circular(2),
       ),
-      child: Text(
-        isFaceUp || isTaken ? text : "?",
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          fontSize: 16,
-          fontWeight: FontWeight.bold,
-          color: (isFaceUp || isTaken) ? Colors.black87 : Colors.white,
-        ),
+      child: Center(
+        child: isFaceUp
+            ? Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(suit,
+                      style: TextStyle(
+                          fontSize: 8,
+                          color: isRed ? Colors.red : Colors.black)),
+                  Text(rank,
+                      style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: isRed ? Colors.red : Colors.black,
+                          height: 1)),
+                ],
+              )
+            : const Icon(Icons.help_outline, size: 10, color: Colors.white24),
       ),
     );
-  }
-
-  Future<void> _handleTap(
-      int index, Map<String, dynamic> data, int myId) async {
-    if (_isProcessing) return;
-    if (!mounted) return;
-    setState(() => _isProcessing = true);
-
-    try {
-      final docRef =
-          FirebaseFirestore.instance.collection('rooms').doc(widget.roomId);
-      await FirebaseFirestore.instance.runTransaction((transaction) async {
-        final snapshot = await transaction.get(docRef);
-        if (!snapshot.exists) return;
-
-        final currentData = snapshot.data() as Map<String, dynamic>;
-        List<dynamic> cards = List.from(currentData['cards']);
-        if (currentData['currentTurn'] != myId) return;
-
-        String myTarget = currentData['targets'][myId.toString()];
-        String cardGenre = cards[index]['genre'];
-
-        if (cardGenre == myTarget) {
-          // 正解：即座に取得してターン継続
-          cards[index]['isFaceUp'] = true;
-          cards[index]['isTaken'] = true;
-          cards[index]['takenBy'] = myId;
-          int newScore = (currentData['scores'][myId.toString()] ?? 0) + 1;
-          Map<String, dynamic> newScores = Map.from(currentData['scores']);
-          newScores[myId.toString()] = newScore;
-
-          transaction.update(docRef, {
-            'cards': cards,
-            'scores': newScores,
-            'winner': newScore >= 5 ? myId : 0,
-          });
-          _isProcessing = false;
-        } else {
-          // ハズレ：めくった後、1秒待って交代
-          cards[index]['isFaceUp'] = true;
-          transaction.update(docRef, {'cards': cards});
-          _handleMismatch(index, cards, myId);
-        }
-      });
-    } catch (e) {
-      if (mounted) setState(() => _isProcessing = false);
-    }
-  }
-
-  Future<void> _handleMismatch(int index, List<dynamic> cards, int myId) async {
-    final docRef =
-        FirebaseFirestore.instance.collection('rooms').doc(widget.roomId);
-    await Future.delayed(const Duration(milliseconds: 1000));
-    if (!mounted) return;
-
-    cards[index]['isFaceUp'] = false;
-    int nextTurn = (myId == 1) ? 2 : 1;
-
-    await docRef.update({
-      'cards': cards,
-      'currentTurn': nextTurn,
-    });
-    if (mounted) setState(() => _isProcessing = false);
   }
 }
