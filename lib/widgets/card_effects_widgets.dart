@@ -3,21 +3,28 @@ import 'dart:math';
 /// ゲーム内の特殊効果（A〜K）の計算ロジックを管理するクラス
 class GameEffectsLogic {
   /// 2の効果: 相手のスコアを2ポイント奪う
-  static Map<String, dynamic> applyTwoEffect(Map scores, int myPlayerId) {
-    Map<String, dynamic> newScores = Map.from(scores);
+  static Map<String, int> applyTwoEffect(
+      Map<String, dynamic> scores, int myPlayerId) {
+    Map<String, int> newScores = {};
+    scores.forEach((key, value) {
+      newScores[key] = (value as num).toInt();
+    });
+
     String myKey = myPlayerId.toString();
     String opponentKey = (myPlayerId == 1 ? 2 : 1).toString();
 
+    int myScore = newScores[myKey] ?? 0;
     int opponentScore = newScores[opponentKey] ?? 0;
+
     int stealAmount = opponentScore >= 2 ? 2 : opponentScore;
 
-    newScores[myKey] = (newScores[myKey] ?? 0) + stealAmount;
+    newScores[myKey] = myScore + stealAmount;
     newScores[opponentKey] = opponentScore - stealAmount;
 
     return newScores;
   }
 
-  /// クイーン(Q)の効果: 13枚ごとの行の中でカードを右に1つずらす
+  /// クイーン(Q)の効果
   static List<dynamic> applyQueenEffect(List<dynamic> cards) {
     List<dynamic> updatedCards = [];
     int rowSize = 13;
@@ -34,7 +41,7 @@ class GameEffectsLogic {
     return updatedCards;
   }
 
-  /// ジャック(J)の効果: 全カードを1行分(13枚)下にスライド
+  /// ジャック(J)の効果
   static List<dynamic> applyJackEffect(List<dynamic> cards) {
     int crossAxisCount = 13;
     List<dynamic> updatedCards = List.from(cards);
@@ -47,7 +54,7 @@ class GameEffectsLogic {
     return [...lastRow, ...remaining];
   }
 
-  /// 10の効果: 裏返しのカードからランダムに最大10枚を選んでシャッフル
+  /// 10の効果
   static Map<String, dynamic> applyTenEffect(List<dynamic> cards) {
     List<dynamic> updatedCards = List.from(cards);
     final random = Random();
@@ -58,8 +65,9 @@ class GameEffectsLogic {
         faceDownIndices.add(i);
       }
     }
-    if (faceDownIndices.isEmpty)
+    if (faceDownIndices.isEmpty) {
       return {'cards': updatedCards, 'indices': <int>[]};
+    }
 
     faceDownIndices.shuffle(random);
     int shuffleCount = min(faceDownIndices.length, 10);
@@ -74,7 +82,7 @@ class GameEffectsLogic {
     return {'cards': updatedCards, 'indices': targetIndices};
   }
 
-  /// 9の効果: 「田の字」に4分割し、対角ブロックを入れ替える
+  /// 9の効果
   static List<dynamic> applyNineEffect(List<dynamic> cards) {
     int crossAxisCount = 13;
     List<dynamic> updatedCards = List.from(cards);
@@ -96,15 +104,17 @@ class GameEffectsLogic {
     return result;
   }
 
-  /// 7の効果: 自動で4枚入れ替え
+  /// 7の効果
   static Map<String, dynamic> applySevenEffect(List<dynamic> cards) {
     List<dynamic> updatedCards = List.from(cards);
     final random = Random();
     List<int> availableIndices = [];
-    for (int i = 0; i < updatedCards.length; i++)
+    for (int i = 0; i < updatedCards.length; i++) {
       if (!updatedCards[i]['isTaken']) availableIndices.add(i);
-    if (availableIndices.length < 2)
-      return {'cards': updatedCards, 'targetIndices': []};
+    }
+    if (availableIndices.length < 2) {
+      return {'cards': updatedCards, 'targetIndices': <int>[]};
+    }
 
     availableIndices.shuffle(random);
     int count = min(availableIndices.length, 4);
@@ -112,8 +122,9 @@ class GameEffectsLogic {
     List<dynamic> targetData =
         targetIndices.map((idx) => updatedCards[idx]).toList();
     List<dynamic> shuffledData = List.from(targetData)..shuffle(random);
-    for (int i = 0; i < targetIndices.length; i++)
+    for (int i = 0; i < targetIndices.length; i++) {
       updatedCards[targetIndices[i]] = shuffledData[i];
+    }
     return {'cards': updatedCards, 'targetIndices': targetIndices};
   }
 
@@ -123,18 +134,31 @@ class GameEffectsLogic {
     List<dynamic> updatedCards = List.from(cards);
     if (indices.length < 2) return updatedCards;
     var firstData = updatedCards[indices[0]];
-    for (int i = 0; i < indices.length - 1; i++)
+    for (int i = 0; i < indices.length - 1; i++) {
       updatedCards[indices[i]] = updatedCards[indices[i + 1]];
+    }
     updatedCards[indices.last] = firstData;
     return updatedCards;
   }
 
   /// A, 6用: ランダム抽出
-  static List<int> getRandomRevealIndices(List<dynamic> cards, int count) {
+  /// ★修正: List<int> excludedIndices ではなく int myPlayerId を受け取るように変更
+  static List<int> getRandomRevealIndices(
+      List<dynamic> cards, int count, int myPlayerId) {
     List<int> availableIndices = [];
     for (int i = 0; i < cards.length; i++) {
-      if (!cards[i]['isTaken'] && !cards[i]['isFaceUp'])
+      // カードデータのチェック
+      Map<String, dynamic> card =
+          (cards[i] as Map<dynamic, dynamic>).cast<String, dynamic>();
+      // 閲覧者リストを取得
+      List<dynamic> permViewers = card['permViewers'] ?? [];
+
+      // まだ取られていない AND まだ表になっていない AND ★自分に永久透視されていない
+      if (card['isTaken'] != true &&
+          card['isFaceUp'] != true &&
+          !permViewers.contains(myPlayerId)) {
         availableIndices.add(i);
+      }
     }
     availableIndices.shuffle();
     return availableIndices.take(count).toList();
