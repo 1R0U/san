@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../widgets/card_mini.dart';
 import '../widgets/game_effects.dart'; // 演出用
-import '../widgets/card_effects_widgets.dart'; // ロジック用 (GameEffectsLogic)
+import '../widgets/card_effects_widgets.dart'; // ロジック用
 
 class OnlineGameScreen extends StatefulWidget {
   final String roomId;
@@ -17,20 +17,19 @@ class OnlineGameScreen extends StatefulWidget {
 
 class _OnlineGameScreenState extends State<OnlineGameScreen> {
   bool _isProcessing = false;
+  Timestamp? _lastProcessedTimestamp;
 
   // --- モード管理変数 ---
   bool _isExchangeMode = false; // 8用
   bool _isCheckMode = false; // 4用
-  bool _isPermanentCheckMode = false; // 3用（永久透視選択）
+  bool _isPermanentCheckMode = false; // 3, 7用
 
-  int _targetCount = 0; // 選択が必要な枚数
+  int _targetCount = 0;
   List<int> _selectedForExchange = [];
 
   // --- 透視・表示用変数 ---
-  List<int> _tempRevealedIndices = []; // A, 6, 7, 4用 (一時的)
-  // ★削除: _permanentRevealedIndices (位置依存のため廃止し、カードデータ自体に保存します)
+  List<int> _tempRevealedIndices = [];
 
-  // 9のエフェクト用色分け
   Color? _getNineZoneColor(int index) {
     int crossAxisCount = 13;
     int r = index ~/ crossAxisCount;
@@ -42,8 +41,7 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
     return null;
   }
 
-  // --- モード開始メソッド群 ---
-
+  // --- モード開始メソッド ---
   void _enterExchangeMode(int count) {
     setState(() {
       _isExchangeMode = true;
@@ -68,7 +66,6 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
         .showSnackBar(SnackBar(content: Text("中身を確認したいカードを $count 枚選んでください")));
   }
 
-  // 3用: 永久透視選択モード
   void _enterPermanentCheckMode(int count) {
     setState(() {
       _isPermanentCheckMode = true;
@@ -81,12 +78,56 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
         .showSnackBar(SnackBar(content: Text("ずっと見たいカードを $count 枚選んでください")));
   }
 
-  // 一時透視開始（8秒）
   void _startReveal(List<int> indices) {
     setState(() => _tempRevealedIndices = indices);
     Future.delayed(const Duration(seconds: 8), () {
       if (mounted) setState(() => _tempRevealedIndices = []);
     });
+  }
+
+  // ★ここが修正ポイント: 自分か相手かを判定して処理を分ける
+  Future<void> _handleEffectTrigger(
+      String effectRank, List<int> effectData, bool isMyTurn) async {
+    // 1. 演出ダイアログは「全員」に見せる (文言は isMyTurn で切り替え)
+    if (effectRank == 'Q')
+      await showQueenEffect(context, isSelf: isMyTurn);
+    else if (effectRank == 'J')
+      await showJackEffect(context, isSelf: isMyTurn);
+    else if (effectRank == '10')
+      await showTenEffect(context, isSelf: isMyTurn);
+    else if (effectRank == '9')
+      await showNineEffect(context, isSelf: isMyTurn);
+    else if (effectRank == '8')
+      await showExchangeEightEffect(context, isSelf: isMyTurn);
+    else if (effectRank == '7')
+      await showSevenEffect(context, isSelf: isMyTurn);
+    else if (effectRank == '6')
+      await showRevealEffect(context, "6", 3, isSelf: isMyTurn);
+    else if (effectRank == '4')
+      await showCheckEffect(context, isSelf: isMyTurn);
+    else if (effectRank == '3')
+      await showPermanentRevealEffect(context, 7, isSelf: isMyTurn);
+    else if (effectRank == '2')
+      await showStealTwoEffect(context, isSelf: isMyTurn);
+    else if (effectRank == 'A')
+      await showRevealEffect(context, "A", 8, isSelf: isMyTurn);
+
+    // 2. 「自分のターン」の時だけ実行する処理
+    if (isMyTurn) {
+      // 透視実行
+      if (effectRank == 'A' || effectRank == '6') {
+        _startReveal(effectData);
+      }
+
+      // 選択モードへの移行
+      if (effectRank == '8')
+        _enterExchangeMode(2);
+      else if (effectRank == '7')
+        _enterPermanentCheckMode(3);
+      else if (effectRank == '4')
+        _enterCheckMode(3);
+      else if (effectRank == '3') _enterPermanentCheckMode(7);
+    }
   }
 
   @override
@@ -108,20 +149,47 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
         final int turn = data['currentTurn'] ?? 1;
         final bool isMyTurn = (turn == widget.myPlayerId);
         final int currentTurnCount = data['turnCount'] ?? 1;
-
-        // 1枚目に選ばれているカードの場所を取得
+        final int maxTurns = data['maxTurns'] ?? 50;
         final int firstSelectedIndex = data['firstSelectedIndex'] ?? -1;
-
         final List<int> highlightedIndices =
             (data['highlightedIndices'] as List? ?? []).cast<int>();
         final String? effectType = data['activeEffect'];
+
+        // エフェクト検知ロジック
+        Timestamp? serverTimestamp = data['effectTimestamp'];
+        String? serverEffect = data['latestEffect'];
+        List<int> serverEffectData =
+            (data['effectData'] as List? ?? []).cast<int>();
+
+        if (serverTimestamp != null && serverEffect != null) {
+          // 初回ロード時は処理せずタイムスタンプだけ同期
+          if (_lastProcessedTimestamp == null) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                setState(() {
+                  _lastProcessedTimestamp = serverTimestamp;
+                });
+              }
+            });
+          }
+          // 新しいエフェクトが来た時だけ実行
+          else if (serverTimestamp.compareTo(_lastProcessedTimestamp!) > 0) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                setState(() {
+                  _lastProcessedTimestamp = serverTimestamp;
+                });
+                _handleEffectTrigger(serverEffect, serverEffectData, isMyTurn);
+              }
+            });
+          }
+        }
 
         if (data['winner'] != 0) {
           WidgetsBinding.instance
               .addPostFrameCallback((_) => _showResult(data['winner'], scores));
         }
 
-        // AppBarのタイトル制御
         String titleText = "Room: ${widget.roomId} (P${widget.myPlayerId})";
         Color titleColor = Colors.white;
         int remaining = _targetCount - _selectedForExchange.length;
@@ -149,7 +217,7 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
                         fontSize: 14,
                         color: titleColor,
                         fontWeight: FontWeight.bold)),
-                Text("Turn: $currentTurnCount",
+                Text("Turn: $currentTurnCount / $maxTurns",
                     style: const TextStyle(
                         fontSize: 12, color: Colors.yellowAccent)),
               ],
@@ -173,7 +241,6 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
                     ),
                     itemCount: cards.length,
                     itemBuilder: (context, index) {
-                      // ★カードデータの取得と、自分に見えているかの判定
                       Map displayCard = Map.from(cards[index]);
                       List<dynamic> permViewers =
                           displayCard['permViewers'] ?? [];
@@ -182,40 +249,24 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
 
                       Color? hColor;
 
-                      // --- 色決めの優先順位 ---
-
-                      // 1. 選択モード中の選択色 (最優先)
                       if (_selectedForExchange.contains(index)) {
                         if (_isExchangeMode)
                           hColor = Colors.redAccent;
                         else if (_isCheckMode)
                           hColor = Colors.cyanAccent;
                         else if (_isPermanentCheckMode) hColor = Colors.orange;
-                      }
-                      // 2. 現在のターンで1枚目に選んでいるカード (赤色)
-                      else if (index == firstSelectedIndex) {
+                      } else if (index == firstSelectedIndex) {
                         hColor = Colors.redAccent;
-                      }
-                      // 3. ★一時透視中のカード (ピンクで表示)
-                      else if (_tempRevealedIndices.contains(index)) {
+                      } else if (_tempRevealedIndices.contains(index)) {
                         hColor = Colors.pinkAccent;
-                      }
-                      // 4. 特殊効果によるハイライト (10の効果)
-                      else if (highlightedIndices.contains(index)) {
+                      } else if (highlightedIndices.contains(index)) {
                         hColor = Colors.yellowAccent;
-                      }
-                      // 5. 9の効果（エリア色分け）
-                      else if (effectType == 'nine') {
+                      } else if (effectType == 'nine') {
                         hColor = _getNineZoneColor(index);
-                      }
-                      // 6. ★永久透視済みのカード (オレンジ)
-                      // 位置リストではなく、カードデータを見るので移動しても色がついてくる！
-                      else if (isPermanentlyRevealedToMe) {
+                      } else if (isPermanentlyRevealedToMe) {
                         hColor = Colors.orange;
                       }
 
-                      // 透視ロジック
-                      // 一時透視 または 永久透視(自分に対して) なら表向ける
                       if (_tempRevealedIndices.contains(index) ||
                           isPermanentlyRevealedToMe) {
                         displayCard['isFaceUp'] = true;
@@ -244,7 +295,8 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
   Future<void> _handleTap(int index, Map<String, dynamic> data) async {
     if (data['winner'] != 0) return;
 
-    // --- 4: 確認モード ---
+    if (_tempRevealedIndices.isNotEmpty) return;
+
     if (_isCheckMode) {
       if (_selectedForExchange.contains(index) ||
           data['cards'][index]['isFaceUp'] == true) return;
@@ -259,33 +311,24 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
       return;
     }
 
-    // --- 3: 永久透視選択モード ---
     if (_isPermanentCheckMode) {
       if (_selectedForExchange.contains(index) ||
           data['cards'][index]['isFaceUp'] == true) return;
-
       setState(() => _selectedForExchange.add(index));
-
       if (_selectedForExchange.length >= _targetCount) {
         setState(() => _isProcessing = true);
-
         final docRef =
             FirebaseFirestore.instance.collection('rooms').doc(widget.roomId);
         List<dynamic> cards = List.from(data['cards']);
-
-        // ★修正: 選んだカードのデータ内に自分のIDを追加して保存 (これにより移動しても追従する)
         for (int idx in _selectedForExchange) {
           Map<String, dynamic> card = Map.from(cards[idx]);
           List<dynamic> viewers = List.from(card['permViewers'] ?? []);
-          if (!viewers.contains(widget.myPlayerId)) {
+          if (!viewers.contains(widget.myPlayerId))
             viewers.add(widget.myPlayerId);
-          }
           card['permViewers'] = viewers;
           cards[idx] = card;
         }
-
         await docRef.update({'cards': cards});
-
         setState(() {
           _isPermanentCheckMode = false;
           _selectedForExchange = [];
@@ -297,7 +340,6 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
       return;
     }
 
-    // --- 8: 交換モード ---
     if (_isExchangeMode) {
       if (_selectedForExchange.contains(index)) return;
       setState(() => _selectedForExchange.add(index));
@@ -317,7 +359,6 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
       return;
     }
 
-    // --- 通常のゲーム進行タップ ---
     if (_isProcessing || data['currentTurn'] != widget.myPlayerId) return;
     List<dynamic> cards = List.from(data['cards']);
     if (cards[index]['isFaceUp'] || cards[index]['isTaken']) return;
@@ -341,11 +382,10 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
         bool isMatch = (rank1 == rank2) && (rank1 != "");
 
         int currentTurnCount = (data['turnCount'] ?? 0) + 1;
-        int maxTurns = data['maxTurns'] ?? 30;
+        int maxTurns = data['maxTurns'] ?? 50;
         Map<String, dynamic> newScores = Map.from(data['scores']);
 
         if (isMatch) {
-          // ■ 正解時
           await Future.delayed(const Duration(milliseconds: 600));
           cards[firstIdx]['isTaken'] = true;
           cards[index]['isTaken'] = true;
@@ -353,57 +393,33 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
           newScores[widget.myPlayerId.toString()] =
               (newScores[widget.myPlayerId.toString()] ?? 0) + points;
 
-          // ★ 特殊効果分岐
           String rank = rank2;
           List<int> highlightIndices = [];
           String? activeEffect;
+          List<int> effectData = [];
 
           if (rank == 'Q') {
-            if (mounted) await showQueenEffect(context);
             cards = GameEffectsLogic.applyQueenEffect(cards);
           } else if (rank == 'J') {
-            if (mounted) await showJackEffect(context);
             cards = GameEffectsLogic.applyJackEffect(cards);
           } else if (rank == '10') {
-            if (mounted) await showTenEffect(context);
             var result = GameEffectsLogic.applyTenEffect(cards);
             cards = result['cards'];
             highlightIndices = result['indices'];
           } else if (rank == '9') {
-            if (mounted) await showNineEffect(context);
             cards = GameEffectsLogic.applyNineEffect(cards);
             activeEffect = 'nine';
-          } else if (rank == '8') {
-            if (mounted) await showExchangeEightEffect(context);
-            _enterExchangeMode(2);
-          } else if (rank == '7') {
-            if (mounted) await showSevenEffect(context);
-            var result = GameEffectsLogic.applySevenEffect(cards);
-            cards = result['cards'];
-            _startReveal(List<int>.from(result['targetIndices']));
-          } else if (rank == '6') {
-            if (mounted) await showRevealEffect(context, "6", 3);
-            // ★修正: 自分のIDを渡して、永久透視済みのものを除外してもらう
-            _startReveal(GameEffectsLogic.getRandomRevealIndices(
-                cards, 3, widget.myPlayerId));
-          } else if (rank == '4') {
-            if (mounted) await showCheckEffect(context);
-            _enterCheckMode(3);
-          } else if (rank == '3') {
-            int revealCount = 7;
-            if (mounted) await showPermanentRevealEffect(context, revealCount);
-            _enterPermanentCheckMode(revealCount);
           } else if (rank == '2') {
-            if (mounted) await showStealTwoEffect(context);
             Map<String, int> stolenResult =
                 GameEffectsLogic.applyTwoEffect(newScores, widget.myPlayerId);
             newScores['1'] = stolenResult['1'];
             newScores['2'] = stolenResult['2'];
+          } else if (rank == '6') {
+            effectData = GameEffectsLogic.getRandomRevealIndices(
+                cards, 3, widget.myPlayerId);
           } else if (rank == 'A') {
-            if (mounted) await showRevealEffect(context, "A", 8);
-            // ★修正: 自分のIDを渡して、永久透視済みのものを除外してもらう
-            _startReveal(GameEffectsLogic.getRandomRevealIndices(
-                cards, 8, widget.myPlayerId));
+            effectData = GameEffectsLogic.getRandomRevealIndices(
+                cards, 8, widget.myPlayerId);
           }
 
           int winner = 0;
@@ -425,6 +441,9 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
             'winner': winner,
             'highlightedIndices': highlightIndices,
             'activeEffect': activeEffect,
+            'latestEffect': rank,
+            'effectTimestamp': FieldValue.serverTimestamp(),
+            'effectData': effectData,
           });
 
           if (highlightIndices.isNotEmpty || activeEffect != null) {
@@ -435,7 +454,6 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
           }
           _isProcessing = false;
         } else {
-          // 不正解
           await Future.delayed(const Duration(milliseconds: 1000));
           cards[firstIdx]['isFaceUp'] = false;
           cards[index]['isFaceUp'] = false;
@@ -470,10 +488,7 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
         children: [
           _scoreText(1, scores['1'], turn == 1),
           Text(isMyTurn ? "YOUR TURN" : "WAITING...",
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 12)),
+              style: const TextStyle(color: Colors.white, fontSize: 12)),
           _scoreText(2, scores['2'], turn == 2),
         ],
       ),

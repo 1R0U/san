@@ -104,29 +104,7 @@ class GameEffectsLogic {
     return result;
   }
 
-  /// 7の効果
-  static Map<String, dynamic> applySevenEffect(List<dynamic> cards) {
-    List<dynamic> updatedCards = List.from(cards);
-    final random = Random();
-    List<int> availableIndices = [];
-    for (int i = 0; i < updatedCards.length; i++) {
-      if (!updatedCards[i]['isTaken']) availableIndices.add(i);
-    }
-    if (availableIndices.length < 2) {
-      return {'cards': updatedCards, 'targetIndices': <int>[]};
-    }
-
-    availableIndices.shuffle(random);
-    int count = min(availableIndices.length, 4);
-    List<int> targetIndices = availableIndices.sublist(0, count);
-    List<dynamic> targetData =
-        targetIndices.map((idx) => updatedCards[idx]).toList();
-    List<dynamic> shuffledData = List.from(targetData)..shuffle(random);
-    for (int i = 0; i < targetIndices.length; i++) {
-      updatedCards[targetIndices[i]] = shuffledData[i];
-    }
-    return {'cards': updatedCards, 'targetIndices': targetIndices};
-  }
+  // ★ 7の「applySevenEffect」は不要になったため削除しました
 
   /// 3, 8, 4用: 指定位置を交換
   static List<dynamic> swapSpecificCards(
@@ -142,18 +120,14 @@ class GameEffectsLogic {
   }
 
   /// A, 6用: ランダム抽出
-  /// ★修正: List<int> excludedIndices ではなく int myPlayerId を受け取るように変更
   static List<int> getRandomRevealIndices(
       List<dynamic> cards, int count, int myPlayerId) {
     List<int> availableIndices = [];
     for (int i = 0; i < cards.length; i++) {
-      // カードデータのチェック
       Map<String, dynamic> card =
           (cards[i] as Map<dynamic, dynamic>).cast<String, dynamic>();
-      // 閲覧者リストを取得
       List<dynamic> permViewers = card['permViewers'] ?? [];
 
-      // まだ取られていない AND まだ表になっていない AND ★自分に永久透視されていない
       if (card['isTaken'] != true &&
           card['isFaceUp'] != true &&
           !permViewers.contains(myPlayerId)) {
