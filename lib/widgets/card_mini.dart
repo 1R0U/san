@@ -1,3 +1,4 @@
+// card_mini.dart
 import 'package:flutter/material.dart';
 
 class CardMini extends StatelessWidget {

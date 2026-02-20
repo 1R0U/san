@@ -1,3 +1,4 @@
+// card_effects_widgets.dart
 import 'dart:math';
 
 /// ゲーム内の特殊効果（A〜K）の計算ロジックを管理するクラス

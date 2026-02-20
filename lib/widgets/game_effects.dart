@@ -1,3 +1,4 @@
+// game_effects.dart
 import 'package:flutter/material.dart';
 
 // 共通の演出ダイアログを表示する関数
