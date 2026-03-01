@@ -4,12 +4,17 @@ class GameHeader extends StatelessWidget {
   final int turn;
   final Map<String, dynamic> scores;
   final bool isMyTurn;
+  final String p1Name;
+  final String p2Name;
 
-  const GameHeader(
-      {super.key,
-      required this.turn,
-      required this.scores,
-      required this.isMyTurn});
+  const GameHeader({
+    super.key,
+    required this.turn,
+    required this.scores,
+    required this.isMyTurn,
+    required this.p1Name,
+    required this.p2Name,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -19,34 +24,34 @@ class GameHeader extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          _scoreText(1, scores['1'], turn == 1),
+          _scoreText(p1Name, scores['1'], turn == 1),
           Text(isMyTurn ? "YOUR TURN" : "WAITING...",
               style: const TextStyle(
-                color: Colors.white,
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 1.2,
-              )),
-          _scoreText(2, scores['2'], turn == 2),
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold)),
+          _scoreText(p2Name, scores['2'], turn == 2),
         ],
       ),
     );
   }
 
-  Widget _scoreText(int id, dynamic score, bool active) {
+  Widget _scoreText(String name, dynamic score, bool active) {
     return Column(
       children: [
-        Text("P$id",
-            style: TextStyle(
-                color: active ? Colors.white : Colors.white38, fontSize: 12)),
-        Text(
-          "$score pt",
-          style: TextStyle(
-            color: active ? Colors.white : Colors.white38,
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-          ),
+        SizedBox(
+          width: 80,
+          child: Text(name,
+              style: TextStyle(
+                  color: active ? Colors.white : Colors.white38, fontSize: 11),
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center),
         ),
+        Text("$score pt",
+            style: TextStyle(
+                color: active ? Colors.white : Colors.white38,
+                fontSize: 18,
+                fontWeight: FontWeight.bold)),
       ],
     );
   }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/firestore_service.dart';
@@ -12,6 +13,7 @@ class LobbyScreen extends StatefulWidget {
 
 class _LobbyScreenState extends State<LobbyScreen> {
   final TextEditingController _roomController = TextEditingController();
+  // ★ _nameController を削除しました
   bool isLoading = false;
 
   void _enterRoom() async {
@@ -25,14 +27,38 @@ class _LobbyScreenState extends State<LobbyScreen> {
       int myPlayerId;
 
       if (!docSnapshot.exists) {
+        // 部屋がない：P1として作成
         myPlayerId = 1;
         await _createRoom(roomId);
       } else {
-        myPlayerId = 2;
-        await docRef.update(
-            {'player2Joined': true, 'p2Ready': false, 'p2Active': true});
-      }
+        final data = docSnapshot.data() as Map<String, dynamic>;
+        bool p1Active = data['p1Active'] ?? false;
+        bool p2Active = data['p2Active'] ?? false;
 
+        if (!p1Active) {
+          // P1枠が空いている
+          myPlayerId = 1;
+          await docRef.update({
+            'p1Active': true,
+            'p1Name': 'プレイヤー1' // デフォルト名を設定
+          });
+        } else if (!p2Active) {
+          // P2枠が空いている
+          myPlayerId = 2;
+          await docRef.update({
+            'p2Active': true,
+            'player2Joined': true,
+            'p2Ready': false,
+            'p2Name': 'プレイヤー2' // デフォルト名を設定
+          });
+        } else {
+          if (mounted)
+            ScaffoldMessenger.of(context)
+                .showSnackBar(const SnackBar(content: Text('この部屋は満員です')));
+          setState(() => isLoading = false);
+          return;
+        }
+      }
       if (!mounted) return;
       Navigator.push(
           context,
@@ -47,6 +73,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
   }
 
+  // ★ 引数から name を削除しました
   Future<void> _createRoom(String roomId) async {
     final suits = ['♠', '♥', '♦', '♣'];
     final ranks = [
@@ -91,6 +118,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
       'p2Ready': false,
       'p1Active': true,
       'p2Active': false,
+      'p1InGame': false,
+      'p2InGame': false,
+      'p1Name': 'プレイヤー1', // ★ 固定の初期名
+      'p2Name': 'プレイヤー2', // ★ 固定の初期名
       'createdAt': FieldValue.serverTimestamp(),
     });
   }
@@ -114,15 +145,18 @@ class _LobbyScreenState extends State<LobbyScreen> {
                     children: [
                       const Icon(Icons.grid_view,
                           size: 60, color: Colors.green),
+                      const SizedBox(height: 10),
                       const Text("真　神経衰弱",
                           style: TextStyle(
                               fontSize: 22, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 25),
+                      // ★ 名前のTextFieldを削除しました
                       TextField(
                           controller: _roomController,
                           decoration: const InputDecoration(
                               labelText: "ルームID",
-                              border: OutlineInputBorder())),
+                              border: OutlineInputBorder(),
+                              prefixIcon: Icon(Icons.vpn_key))),
                       const SizedBox(height: 25),
                       if (isLoading)
                         const CircularProgressIndicator()
@@ -132,8 +166,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
                             child: ElevatedButton(
                                 onPressed: _enterRoom,
                                 style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.green),
-                                child: const Text("入室 / 作成"))),
+                                    backgroundColor: Colors.green,
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 15)),
+                                child: const Text("入室 / 作成",
+                                    style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold)))),
                       const SizedBox(height: 15),
                       SizedBox(
                           width: double.infinity,
@@ -142,7 +182,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
                                   context,
                                   MaterialPageRoute(
                                       builder: (_) => const RuleScreen())),
-                              child: const Text("ルール説明"))),
+                              style: OutlinedButton.styleFrom(
+                                  side: const BorderSide(color: Colors.green),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 15)),
+                              child: const Text("ルール説明",
+                                  style: TextStyle(
+                                      color: Colors.green,
+                                      fontWeight: FontWeight.bold)))),
                     ],
                   ),
                 ),
@@ -152,7 +199,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                   icon: const Icon(Icons.delete_sweep,
                       color: Colors.white24, size: 16),
                   label: const Text("履歴全削除",
-                      style: TextStyle(color: Colors.white24))),
+                      style: TextStyle(color: Colors.white24, fontSize: 12))),
             ],
           ),
         ),
