@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'online_game_screen.dart';
-import 'rule_screen.dart';
-import '../widgets/standby_player_card.dart';
 import '../services/firestore_service.dart';
+import '../models/player_model.dart';
+import '../widgets/standby_player_card.dart';
+import 'online_game_screen.dart';
 
 class StandbyScreen extends StatelessWidget {
   final String roomId;
@@ -11,165 +11,150 @@ class StandbyScreen extends StatelessWidget {
   const StandbyScreen(
       {super.key, required this.roomId, required this.myPlayerId});
 
-  // ★名前変更ダイアログを表示
-  void _showNameEditDialog(BuildContext context, String currentName) {
-    final controller = TextEditingController(text: currentName);
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("名前を変更"),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: "新しい名前を入力"),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text("キャンセル")),
-          TextButton(
-            onPressed: () async {
-              final newName = controller.text.trim();
-              if (newName.isNotEmpty) {
-                await FirestoreService.updatePlayerName(
-                    roomId, myPlayerId, newName);
-              }
-              if (context.mounted) Navigator.pop(context);
-            },
-            child: const Text("保存"),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _leaveStandby(BuildContext context) async {
-    await FirestoreService.updateActiveStatus(roomId, myPlayerId, false);
-    await FirebaseFirestore.instance.collection('rooms').doc(roomId).update({
-      myPlayerId == 1 ? 'p1Ready' : 'p2Ready': false,
-    });
-    if (context.mounted) Navigator.pop(context);
-  }
-
   @override
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
-        await _leaveStandby(context);
+        await FirestoreService.leaveRoomAndCleanup(roomId, myPlayerId);
+        if (context.mounted) Navigator.pop(context);
       },
       child: StreamBuilder<DocumentSnapshot>(
         stream: FirebaseFirestore.instance
             .collection('rooms')
             .doc(roomId)
             .snapshots(),
-        builder: (context, snapshot) {
-          if (!snapshot.hasData || !snapshot.data!.exists)
+        builder: (context, snap) {
+          if (!snap.hasData || !snap.data!.exists)
             return const Scaffold(
                 body: Center(child: CircularProgressIndicator()));
-          final data = snapshot.data!.data() as Map<String, dynamic>;
-          final String p1Name = data['p1Name'] ?? "P1";
-          final String p2Name = data['p2Name'] ?? "P2";
-          final bool p1Ready = data['p1Ready'] ?? false;
-          final bool p2Ready = data['p2Ready'] ?? false;
-          final bool player2Joined = data['player2Joined'] ?? false;
-          final bool isIMReady = myPlayerId == 1 ? p1Ready : p2Ready;
+          final data = snap.data!.data() as Map<String, dynamic>;
+          final playersMap = data['players'] as Map<String, dynamic>;
+          if (playersMap[myPlayerId.toString()] == null)
+            return const Scaffold(body: Center(child: Text("データエラー")));
 
-          if (p1Ready && p2Ready) {
-            WidgetsBinding.instance.addPostFrameCallback((_) async {
-              await FirebaseFirestore.instance
-                  .collection('rooms')
-                  .doc(roomId)
-                  .update({'p1InGame': true, 'p2InGame': true});
-              if (context.mounted)
+          final meData = PlayerModel.fromMap(playersMap[myPlayerId.toString()]);
+          final activePlayers =
+              playersMap.values.where((p) => p['isActive'] == true).toList();
+          final allReady = activePlayers.every((p) => p['isReady'] == true) &&
+              activePlayers.length >= 2;
+
+          if (data['isStarted'] == true) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (context.mounted) {
                 Navigator.pushReplacement(
                     context,
                     MaterialPageRoute(
                         builder: (_) => OnlineGameScreen(
                             roomId: roomId, myPlayerId: myPlayerId)));
+              }
             });
           }
 
           return Scaffold(
             backgroundColor: const Color(0xFF0A3D14),
             appBar: AppBar(
+              title: Text("Room: $roomId"),
               backgroundColor: Colors.transparent,
-              elevation: 0,
               leading: IconButton(
-                  icon: const Icon(Icons.arrow_back),
-                  onPressed: () => _leaveStandby(context)),
-              title: const Text("対戦待機", style: TextStyle(fontSize: 16)),
-              centerTitle: true,
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () async {
+                  await FirestoreService.leaveRoomAndCleanup(
+                      roomId, myPlayerId);
+                  if (context.mounted) Navigator.pop(context);
+                },
+              ),
             ),
-            body: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Text("対戦待機中",
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 26,
-                          fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 40),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            body: Column(
+              children: [
+                Expanded(
+                  child: GridView.builder(
+                    padding: const EdgeInsets.all(20),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 3,
+                            mainAxisSpacing: 10,
+                            crossAxisSpacing: 10,
+                            childAspectRatio: 0.8),
+                    itemCount: 8,
+                    itemBuilder: (context, i) {
+                      final p = playersMap[(i + 1).toString()];
+                      return StandbyPlayerCard(
+                        label: p?['name'] ?? "空き",
+                        isReady: p?['isReady'] ?? false,
+                        isJoined: p?['isActive'] ?? false,
+                        isMe: myPlayerId == (i + 1),
+                        onEdit: myPlayerId == (i + 1)
+                            ? () => _editName(context, roomId, meData)
+                            : null,
+                      );
+                    },
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(30),
+                  child: Column(
                     children: [
-                      StandbyPlayerCard(
-                        label: p1Name,
-                        isReady: p1Ready,
-                        isJoined: data['p1Active'] ?? true,
-                        isMe: myPlayerId == 1,
-                        onEdit: () => _showNameEditDialog(context, p1Name), // ★
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                            backgroundColor:
+                                meData.isReady ? Colors.orange : Colors.green),
+                        onPressed: () => FirestoreService.updatePlayer(
+                            roomId,
+                            PlayerModel(
+                                id: myPlayerId,
+                                name: meData.name,
+                                isActive: true,
+                                isReady: !meData.isReady)),
+                        child: Text(meData.isReady ? "解除" : "準備OK"),
                       ),
-                      StandbyPlayerCard(
-                        label: p2Name,
-                        isReady: p2Ready,
-                        isJoined: data['p2Active'] ?? false,
-                        isMe: myPlayerId == 2,
-                        onEdit: () => _showNameEditDialog(context, p2Name), // ★
-                      ),
+                      if (myPlayerId == 1 && allReady)
+                        TextButton(
+                            onPressed: () => FirebaseFirestore.instance
+                                .collection('rooms')
+                                .doc(roomId)
+                                .update({'isStarted': true}),
+                            child: const Text("開始！",
+                                style: TextStyle(
+                                    color: Colors.yellow,
+                                    fontSize: 24,
+                                    fontWeight: FontWeight.bold))),
                     ],
                   ),
-                  const SizedBox(height: 50),
-                  SizedBox(
-                      width: 220,
-                      height: 60,
-                      child: ElevatedButton(
-                          onPressed: player2Joined
-                              ? () => FirebaseFirestore.instance
-                                      .collection('rooms')
-                                      .doc(roomId)
-                                      .update({
-                                    myPlayerId == 1 ? 'p1Ready' : 'p2Ready':
-                                        !isIMReady
-                                  })
-                              : null,
-                          style: ElevatedButton.styleFrom(
-                              backgroundColor:
-                                  isIMReady ? Colors.orange : Colors.green,
-                              foregroundColor: Colors.white),
-                          child: Text(isIMReady ? "解除する" : "準備OK！",
-                              style: const TextStyle(
-                                  fontSize: 18, fontWeight: FontWeight.bold)))),
-                  const SizedBox(height: 15),
-                  SizedBox(
-                      width: 220,
-                      height: 50,
-                      child: OutlinedButton(
-                          onPressed: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (_) => const RuleScreen())),
-                          style: OutlinedButton.styleFrom(
-                              side: const BorderSide(color: Colors.white)),
-                          child: const Text("ルールを確認",
-                              style: TextStyle(color: Colors.white)))),
-                ],
-              ),
+                )
+              ],
             ),
           );
         },
+      ),
+    );
+  }
+
+  void _editName(BuildContext context, String rid, PlayerModel me) {
+    final c = TextEditingController(text: me.name);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("名前変更"),
+        content: TextField(controller: c, autofocus: true),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text("キャンセル")),
+          TextButton(
+            child: const Text("保存"),
+            onPressed: () {
+              FirestoreService.updatePlayer(
+                  rid,
+                  PlayerModel(
+                      id: me.id,
+                      name: c.text,
+                      isActive: true,
+                      isReady: me.isReady));
+              Navigator.pop(ctx);
+            },
+          ),
+        ],
       ),
     );
   }
