@@ -1,18 +1,20 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'standby_screen.dart';
-import '../services/firestore_service.dart';
+import '../widgets/card_effects_widgets.dart';
 import '../widgets/game_header.dart';
 import '../widgets/game_grid.dart';
-import '../widgets/game_effects.dart';
-import '../widgets/card_effects_widgets.dart';
+import '../services/firestore_service.dart';
+import '../models/player_model.dart';
+import 'standby_screen.dart';
 
 class OnlineGameScreen extends StatefulWidget {
   final String roomId;
   final int myPlayerId;
+
   const OnlineGameScreen(
       {super.key, required this.roomId, required this.myPlayerId});
+
   @override
   State<OnlineGameScreen> createState() => _OnlineGameScreenState();
 }
@@ -20,68 +22,25 @@ class OnlineGameScreen extends StatefulWidget {
 class _OnlineGameScreenState extends State<OnlineGameScreen> {
   bool _isProcessing = false;
   Timestamp? _lastProcessedTimestamp;
-  bool _isExchangeMode = false,
-      _isCheckMode = false,
-      _isPermanentCheckMode = false;
+
+  // 特殊モード（3, 4, 7, 8の効果）の状態管理
+  bool _isExchangeMode = false;
+  bool _isCheckMode = false;
+  bool _isPermanentCheckMode = false;
   int _targetCount = 0;
-  List<int> _selectedForExchange = [], _tempRevealedIndices = [];
+  List<int> _selectedIndices = [];
+  List<int> _tempRevealed = []; // A, 6の効果用
 
-  // --- 待機画面に戻る際の共通処理 ---
+  // --- 待機画面へ戻る ---
   Future<void> _backToStandby() async {
-    final docRef =
-        FirebaseFirestore.instance.collection('rooms').doc(widget.roomId);
-
-    // 1. 自分のゲーム中フラグを折る
-    final myGameField = widget.myPlayerId == 1 ? 'p1InGame' : 'p2InGame';
-    await docRef.update({
-      myGameField: false,
-      'p1Ready': false,
-      'p2Ready': false,
-      'firstSelectedIndex': -1
-    });
-
-    // 2. 相手も戻っているかチェック
-    final snap = await docRef.get();
-    if (snap.exists) {
-      final data = snap.data() as Map<String, dynamic>;
-      final bool p1InGame = data['p1InGame'] ?? false;
-      final bool p2InGame = data['p2InGame'] ?? false;
-
-      // 二人ともゲーム画面からいなくなったら盤面を完全初期化
-      if (!p1InGame && !p2InGame) {
-        await FirestoreService.resetRoomFully(widget.roomId);
-      }
+    await FirestoreService.leaveRoomAndCleanup(
+        widget.roomId, widget.myPlayerId);
+    if (mounted) {
+      Navigator.of(context).popUntil((route) => route.isFirst);
     }
-
-    if (!mounted) return;
-    Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-            builder: (_) => StandbyScreen(
-                roomId: widget.roomId, myPlayerId: widget.myPlayerId)));
   }
 
-  // 退出確認ダイアログ
-  Future<void> _showExitConfirmation() async {
-    final bool? shouldExit = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("退出の確認"),
-        content: const Text("対戦を中断して待機画面に戻りますか？\n(二人が戻るとデータはリセットされます)"),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text("キャンセル")),
-          TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text("戻る", style: TextStyle(color: Colors.red))),
-        ],
-      ),
-    );
-    if (shouldExit == true) await _backToStandby();
-  }
-
-  // --- カードエフェクト演出 ---
+  // --- エフェクト演出のトリガー ---
   Future<void> _handleEffectTrigger(
       String effectRank, List<int> effectData, bool isMyTurn) async {
     if (effectRank == 'Q')
@@ -107,187 +66,55 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
     else if (effectRank == 'A')
       await showRevealEffect(context, "A", 8, isSelf: isMyTurn);
 
-    if (isMyTurn) {
-      if (effectRank == 'A' || effectRank == '6') {
-        setState(() => _tempRevealedIndices = effectData);
-        Future.delayed(const Duration(seconds: 8), () {
-          if (mounted) setState(() => _tempRevealedIndices = []);
-        });
-      }
-      if (effectRank == '8')
-        setState(() => {
-              _isExchangeMode = true,
-              _targetCount = 2,
-              _selectedForExchange = []
-            });
-      else if (effectRank == '7')
-        setState(() => {
-              _isPermanentCheckMode = true,
-              _targetCount = 3,
-              _selectedForExchange = []
-            });
-      else if (effectRank == '4')
-        setState(() =>
-            {_isCheckMode = true, _targetCount = 3, _selectedForExchange = []});
-      else if (effectRank == '3')
-        setState(() => {
-              _isPermanentCheckMode = true,
-              _targetCount = 7,
-              _selectedForExchange = []
-            });
+    if (isMyTurn && (effectRank == 'A' || effectRank == '6')) {
+      setState(() => _tempRevealed = effectData);
+      Future.delayed(const Duration(seconds: 8), () {
+        if (mounted) setState(() => _tempRevealed = []);
+      });
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, _) async {
-        if (didPop) return;
-        await _showExitConfirmation();
-      },
-      child: StreamBuilder<DocumentSnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('rooms')
-            .doc(widget.roomId)
-            .snapshots(),
-        builder: (context, snapshot) {
-          if (!snapshot.hasData || !snapshot.data!.exists)
-            return const Scaffold(
-                body: Center(child: CircularProgressIndicator()));
-          final data = snapshot.data!.data() as Map<String, dynamic>;
-          final turn = data['currentTurn'] ?? 1;
-          final isMyTurn = turn == widget.myPlayerId;
-          final scores =
-              Map<String, dynamic>.from(data['scores'] ?? {'1': 0, '2': 0});
-          final p1Name = data['p1Name'] ?? "P1";
-          final p2Name = data['p2Name'] ?? "P2";
-
-          Timestamp? ts = data['effectTimestamp'];
-          if (ts != null &&
-              (_lastProcessedTimestamp == null ||
-                  ts.compareTo(_lastProcessedTimestamp!) > 0)) {
-            _lastProcessedTimestamp = ts;
-            WidgetsBinding.instance.addPostFrameCallback((_) =>
-                _handleEffectTrigger(data['latestEffect'] ?? '',
-                    (data['effectData'] as List? ?? []).cast<int>(), isMyTurn));
-          }
-          if (data['winner'] != 0)
-            WidgetsBinding.instance.addPostFrameCallback(
-                (_) => _showResult(data['winner'], scores));
-
-          return Scaffold(
-            backgroundColor: const Color(0xFF0A3D14),
-            appBar: AppBar(
-                toolbarHeight: 50,
-                backgroundColor: turn == 1 ? Colors.blue[900] : Colors.red[900],
-                leading: IconButton(
-                    icon: const Icon(Icons.arrow_back),
-                    onPressed: () => _showExitConfirmation()),
-                title: Text("Turn: ${data['turnCount']} / ${data['maxTurns']}",
-                    style: const TextStyle(fontSize: 14))),
-            body: Column(
-              children: [
-                GameHeader(
-                    turn: turn,
-                    scores: scores,
-                    isMyTurn: isMyTurn,
-                    p1Name: p1Name,
-                    p2Name: p2Name),
-                Expanded(
-                    child: Padding(
-                        padding: const EdgeInsets.all(4.0),
-                        child: GameGrid(
-                            cards: data['cards'],
-                            myPlayerId: widget.myPlayerId,
-                            turn: turn,
-                            firstSelectedIndex:
-                                data['firstSelectedIndex'] ?? -1,
-                            highlightedIndices:
-                                (data['highlightedIndices'] as List? ?? [])
-                                    .cast<int>(),
-                            tempRevealedIndices: _tempRevealedIndices,
-                            selectedForExchange: _selectedForExchange,
-                            activeEffect: data['activeEffect'],
-                            onTap: (i) => _handleTap(i, data)))),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  // _handleTap などのロジック（変更なし）
+  // --- メインタップ処理 ---
   Future<void> _handleTap(int index, Map<String, dynamic> data) async {
-    if (data['winner'] != 0 || _isProcessing || _tempRevealedIndices.isNotEmpty)
-      return;
-    final docRef =
-        FirebaseFirestore.instance.collection('rooms').doc(widget.roomId);
+    if (_isProcessing || _tempRevealed.isNotEmpty) return;
 
-    if (_isCheckMode || _isPermanentCheckMode || _isExchangeMode) {
-      if (_selectedForExchange.contains(index) ||
-          data['cards'][index]['isFaceUp']) return;
-      setState(() => _selectedForExchange.add(index));
-      if (_selectedForExchange.length >= _targetCount) {
-        if (_isCheckMode) {
-          setState(
-              () => _tempRevealedIndices = List.from(_selectedForExchange));
-          Future.delayed(const Duration(seconds: 8),
-              () => setState(() => _tempRevealedIndices = []));
-        } else {
-          setState(() => _isProcessing = true);
-          List<dynamic> cards = List.from(data['cards']);
-          if (_isPermanentCheckMode) {
-            for (var i in _selectedForExchange) {
-              Map<String, dynamic> c = Map<String, dynamic>.from(cards[i]);
-              List<int> v = List<int>.from(c['permViewers'] ?? []);
-              if (!v.contains(widget.myPlayerId)) v.add(widget.myPlayerId);
-              c['permViewers'] = v;
-              cards[i] = c;
-            }
-          } else if (_isExchangeMode)
-            cards =
-                GameEffectsLogic.swapSpecificCards(cards, _selectedForExchange);
-          await docRef.update({'cards': cards});
-          setState(() => _isProcessing = false);
-        }
-        setState(() => {
-              _isCheckMode = false,
-              _isPermanentCheckMode = false,
-              _isExchangeMode = false,
-              _selectedForExchange = []
-            });
-      }
+    if (_isExchangeMode || _isCheckMode || _isPermanentCheckMode) {
+      _handleSpecialModeSelection(index, data);
       return;
     }
 
     if (data['currentTurn'] != widget.myPlayerId) return;
+
     List<dynamic> cards = List.from(data['cards']);
     if (cards[index]['isFaceUp'] || cards[index]['isTaken']) return;
+
     setState(() => _isProcessing = true);
-    int firstIdx = data['firstSelectedIndex'] ?? -1;
+    final docRef =
+        FirebaseFirestore.instance.collection('rooms').doc(widget.roomId);
+    int first = data['firstSelectedIndex'] ?? -1;
 
     try {
-      if (firstIdx == -1) {
+      if (first == -1) {
         cards[index]['isFaceUp'] = true;
         await docRef.update({'cards': cards, 'firstSelectedIndex': index});
       } else {
         cards[index]['isFaceUp'] = true;
         await docRef.update({'cards': cards});
-        bool match = cards[firstIdx]['rank'] == cards[index]['rank'];
-        int nextCount = (data['turnCount'] ?? 1) + 1;
-        Map<String, dynamic> scores = Map.from(data['scores']);
+
+        await Future.delayed(const Duration(milliseconds: 1200));
+
+        bool match = cards[first]['rank'] == cards[index]['rank'];
+        Map<String, dynamic> playersMap =
+            Map<String, dynamic>.from(data['players']);
 
         if (match) {
-          await Future.delayed(const Duration(milliseconds: 600));
-          cards[firstIdx]['isTaken'] = cards[index]['isTaken'] = true;
-          scores[widget.myPlayerId.toString()] =
-              (scores[widget.myPlayerId.toString()] ?? 0) +
-                  _getPoint(cards[index]['rank']);
           String r = cards[index]['rank'];
+          cards[first]['isTaken'] = cards[index]['isTaken'] = true;
+          playersMap[widget.myPlayerId.toString()]['score'] +=
+              GameEffectsLogic.getCardPoints(r);
+
           List<int> hIdx = [];
-          String? effect;
+          String? activeEffect;
           List<int> eData = [];
           if (r == 'Q')
             cards = GameEffectsLogic.applyQueenEffect(cards);
@@ -299,95 +126,196 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
             hIdx = res['indices'];
           } else if (r == '9') {
             cards = GameEffectsLogic.applyNineEffect(cards);
-            effect = 'nine';
-          } else if (r == '2') {
-            var res =
-                GameEffectsLogic.applyTwoEffect(scores, widget.myPlayerId);
-            scores['1'] = res['1'];
-            scores['2'] = res['2'];
-          } else if (r == '6')
+            activeEffect = 'nine';
+          } else if (r == '2')
+            playersMap =
+                GameEffectsLogic.applyTwoEffect(playersMap, widget.myPlayerId);
+          else if (r == '6' || r == 'A')
             eData = GameEffectsLogic.getRandomRevealIndices(
-                cards, 3, widget.myPlayerId);
-          else if (r == 'A')
-            eData = GameEffectsLogic.getRandomRevealIndices(
-                cards, 8, widget.myPlayerId);
+                cards, r == 'A' ? 8 : 3, widget.myPlayerId);
 
-          int win =
-              (cards.every((c) => c['isTaken']) || nextCount > data['maxTurns'])
-                  ? (scores['1'] > scores['2']
-                      ? 1
-                      : (scores['2'] > scores['1'] ? 2 : 3))
-                  : 0;
+          _checkSpecialActionNeeded(r);
           await docRef.update({
             'cards': cards,
-            'scores': scores,
+            'players': playersMap,
             'firstSelectedIndex': -1,
-            'turnCount': nextCount,
-            'winner': win,
-            'highlightedIndices': hIdx,
-            'activeEffect': effect,
             'latestEffect': r,
             'effectTimestamp': FieldValue.serverTimestamp(),
-            'effectData': eData
+            'effectData': eData,
+            'highlightedIndices': hIdx,
+            'activeEffect': activeEffect,
+            'winner': cards.every((c) => c['isTaken']) ? widget.myPlayerId : 0,
           });
-
-          if (hIdx.isNotEmpty || effect != null) {
-            Future.delayed(const Duration(seconds: 5), () {
-              if (mounted)
-                docRef.update({'highlightedIndices': [], 'activeEffect': null});
-            });
-          }
         } else {
-          await Future.delayed(const Duration(milliseconds: 1000));
-          cards[firstIdx]['isFaceUp'] = cards[index]['isFaceUp'] = false;
-          int win = (nextCount > data['maxTurns'])
-              ? (scores['1'] > scores['2']
-                  ? 1
-                  : (scores['2'] > scores['1'] ? 2 : 3))
-              : 0;
+          cards[first]['isFaceUp'] = cards[index]['isFaceUp'] = false;
+          int nextTurn =
+              GameEffectsLogic.getNextTurn(widget.myPlayerId, playersMap);
           await docRef.update({
             'cards': cards,
             'firstSelectedIndex': -1,
-            'currentTurn': widget.myPlayerId == 1 ? 2 : 1,
-            'turnCount': nextCount,
-            'winner': win
+            'currentTurn': nextTurn,
+            'turnCount': (data['turnCount'] ?? 1) + 1
           });
         }
       }
-    } catch (e) {
-      setState(() => _isProcessing = false);
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
-    setState(() => _isProcessing = false);
   }
 
-  int _getPoint(String r) {
-    if (r == 'A') return 1;
-    if (r == 'J') return 11;
-    if (r == 'Q') return 12;
-    if (r == 'K') return 13;
-    return int.tryParse(r) ?? 0;
+  void _handleSpecialModeSelection(int index, Map<String, dynamic> data) async {
+    if (_selectedIndices.contains(index) || data['cards'][index]['isFaceUp'])
+      return;
+    setState(() => _selectedIndices.add(index));
+    if (_selectedIndices.length >= _targetCount) {
+      final docRef =
+          FirebaseFirestore.instance.collection('rooms').doc(widget.roomId);
+      List<dynamic> cards = List.from(data['cards']);
+      if (_isCheckMode) {
+        setState(() => _tempRevealed = List.from(_selectedIndices));
+        Future.delayed(const Duration(seconds: 8),
+            () => setState(() => _tempRevealed = []));
+      } else {
+        if (_isPermanentCheckMode) {
+          for (var i in _selectedIndices) {
+            Map<String, dynamic> c = Map<String, dynamic>.from(cards[i]);
+            List<int> v = List<int>.from(c['permViewers'] ?? []);
+            if (!v.contains(widget.myPlayerId)) v.add(widget.myPlayerId);
+            c['permViewers'] = v;
+            cards[i] = c;
+          }
+        } else if (_isExchangeMode)
+          cards = GameEffectsLogic.swapSpecificCards(cards, _selectedIndices);
+        await docRef.update({'cards': cards});
+      }
+      setState(() {
+        _isCheckMode = false;
+        _isPermanentCheckMode = false;
+        _isExchangeMode = false;
+        _selectedIndices = [];
+      });
+    }
   }
 
-  void _showResult(int win, Map<String, dynamic> s) {
+  void _checkSpecialActionNeeded(String r) {
+    setState(() {
+      _selectedIndices = [];
+      if (r == '8') {
+        _isExchangeMode = true;
+        _targetCount = 2;
+      } else if (r == '4') {
+        _isCheckMode = true;
+        _targetCount = 3;
+      } else if (r == '7') {
+        _isPermanentCheckMode = true;
+        _targetCount = 3;
+      } else if (r == '3') {
+        _isPermanentCheckMode = true;
+        _targetCount = 7;
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        final exit = await showDialog<bool>(
+            context: context,
+            builder: (c) => AlertDialog(
+                    title: const Text("確認"),
+                    content: const Text("退出しますか？"),
+                    actions: [
+                      TextButton(
+                          onPressed: () => Navigator.pop(c, false),
+                          child: const Text("いいえ")),
+                      TextButton(
+                          onPressed: () => Navigator.pop(c, true),
+                          child: const Text("はい"))
+                    ]));
+        if (exit == true) await _backToStandby();
+      },
+      child: StreamBuilder<DocumentSnapshot>(
+        stream: FirebaseFirestore.instance
+            .collection('rooms')
+            .doc(widget.roomId)
+            .snapshots(),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData || !snapshot.data!.exists)
+            return const Scaffold(
+                body: Center(child: CircularProgressIndicator()));
+          final data = snapshot.data!.data() as Map<String, dynamic>;
+          final players = Map<String, dynamic>.from(data['players'] ?? {});
+          final turn = data['currentTurn'] ?? 1;
+          final isMyTurn = turn == widget.myPlayerId;
+          Timestamp? ts = data['effectTimestamp'];
+          if (ts != null &&
+              (_lastProcessedTimestamp == null ||
+                  ts.compareTo(_lastProcessedTimestamp!) > 0)) {
+            _lastProcessedTimestamp = ts;
+            WidgetsBinding.instance.addPostFrameCallback((_) =>
+                _handleEffectTrigger(data['latestEffect'] ?? '',
+                    (data['effectData'] as List? ?? []).cast<int>(), isMyTurn));
+          }
+          return Scaffold(
+            backgroundColor: const Color(0xFF0A3D14),
+            appBar: AppBar(
+              toolbarHeight: 50,
+              backgroundColor: isMyTurn ? Colors.blue[900] : Colors.red[900],
+              title: Text("TURN: ${data['turnCount']} / 50",
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.bold)),
+              centerTitle: true,
+            ),
+            body: Column(
+              children: [
+                GameHeader(
+                    turn: turn, players: players, myId: widget.myPlayerId),
+                // ★ 拡大・縮小・スライドを可能にするウィジェット
+                Expanded(
+                  child: InteractiveViewer(
+                    boundaryMargin: const EdgeInsets.all(50), // 画面外にどれくらい動かせるか
+                    minScale: 0.5, // 最小50%まで縮小
+                    maxScale: 3.0, // 最大300%まで拡大
+                    child: Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: GameGrid(
+                            cards: data['cards'],
+                            myPlayerId: widget.myPlayerId,
+                            turn: turn,
+                            firstSelectedIndex:
+                                data['firstSelectedIndex'] ?? -1,
+                            highlightedIndices:
+                                (data['highlightedIndices'] as List? ?? [])
+                                    .cast<int>(),
+                            tempRevealedIndices: _tempRevealed,
+                            selectedForExchange: _selectedIndices,
+                            activeEffect: data['activeEffect'],
+                            onTap: (i) => _handleTap(i, data))),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  void _showResult(int win, Map players) {
     showDialog(
         context: context,
         barrierDismissible: false,
         builder: (c) => AlertDialog(
-                title: Text(win == 3
-                    ? "引き分け"
-                    : (win == widget.myPlayerId ? "勝利！" : "敗北...")),
-                content: Text("${s['1']} - ${s['2']}"),
+                title: const Text("終了"),
+                content: const Text("ゲームが終了しました。"),
                 actions: [
                   TextButton(
                       onPressed: () async {
                         await FirestoreService.resetBoardOnly(widget.roomId);
-                        if (mounted)
-                          Navigator.pushReplacement(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (_) => StandbyScreen(
-                                      roomId: widget.roomId,
-                                      myPlayerId: widget.myPlayerId)));
+                        if (mounted) Navigator.pop(c);
                       },
                       child: const Text("再戦"))
                 ]));
