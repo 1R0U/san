@@ -1,5 +1,3 @@
-import 'dart:math';
-
 class GameEffectsLogic {
   // Q: 横に1つずつずらす
   static List<dynamic> applyQueenEffect(List<dynamic> cards) {

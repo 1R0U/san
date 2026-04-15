@@ -1,0 +1,53 @@
+name: Build Check
+
+# mainブランチに変更がプッシュされた時、またはPull Requestが作成された時に動きます
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  check-and-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. リポジトリのコードを取得
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Flutter環境を準備
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.0' # お使いのFlutterバージョンに合わせてください
+          channel: 'stable'
+
+      # 3. パッケージのインストール
+      - name: Install dependencies
+        run: flutter pub get
+
+      # 4. コードのフォーマットチェック（インデントなどの乱れがないか）
+      - name: Check formatting
+        run: dart format --output=none lib
+
+      # 5. 静的解析（文法エラーや非推奨コードがないか）
+      - name: Analyze code
+        run: flutter analyze --no-fatal-infos
+
+      # 6. テストの実行（エラーで落ちないか確認）
+      - name: Run tests
+        if: ${{ hashFiles('test/**/*.dart') != '' }}
+        run: flutter test
+
+      # 7. 【重要】ビルドが正常に通るかのテスト
+      # ※Web版としてビルドできるか確認するのが一番高速で手軽です
+      - name: Verify Web Build
+        run: flutter build web
+
+      # ※もしAndroidアプリとしてのビルドも確認したい場合は、下のコメントアウトを外してください
+      # （--debug をつけるとリリースビルドより早く終わるため、CIでの確認用におすすめです）
+      # - name: Verify Android Build
+      #   run: flutter build apk --debug

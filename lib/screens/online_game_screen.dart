@@ -5,8 +5,6 @@ import '../widgets/card_effects_widgets.dart';
 import '../widgets/game_header.dart';
 import '../widgets/game_grid.dart';
 import '../services/firestore_service.dart';
-import '../models/player_model.dart';
-import 'standby_screen.dart';
 
 class OnlineGameScreen extends StatefulWidget {
   final String roomId;
@@ -220,7 +218,7 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false,
-      onPopInvokedWithResult: (didPop, _) async {
+      onPopInvoked: (didPop) async {
         if (didPop) return;
         final exit = await showDialog<bool>(
             context: context,
@@ -248,6 +246,8 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
                 body: Center(child: CircularProgressIndicator()));
           final data = snapshot.data!.data() as Map<String, dynamic>;
           final players = Map<String, dynamic>.from(data['players'] ?? {});
+          final me = players[widget.myPlayerId.toString()] as Map<String, dynamic>?;
+          final isTallLayout = (me?['layoutMode'] ?? 'wide') == 'tall';
           final turn = data['currentTurn'] ?? 1;
           final isMyTurn = turn == widget.myPlayerId;
           Timestamp? ts = data['effectTimestamp'];
@@ -268,6 +268,19 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
                   style: const TextStyle(
                       fontSize: 16, fontWeight: FontWeight.bold)),
               centerTitle: true,
+              actions: [
+                IconButton(
+                  tooltip: isTallLayout ? '横長表示に切替' : '縦長表示に切替',
+                  onPressed: () async {
+                    final next = isTallLayout ? 'wide' : 'tall';
+                    await FirebaseFirestore.instance
+                        .collection('rooms')
+                        .doc(widget.roomId)
+                        .update({'players.${widget.myPlayerId}.layoutMode': next});
+                  },
+                  icon: Icon(isTallLayout ? Icons.view_week : Icons.view_column),
+                ),
+              ],
             ),
             body: Column(
               children: [
@@ -276,24 +289,30 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
                 // ★ 拡大・縮小・スライドを可能にするウィジェット
                 Expanded(
                   child: InteractiveViewer(
-                    boundaryMargin: const EdgeInsets.all(50), // 画面外にどれくらい動かせるか
+                  constrained: false,
+                  panEnabled: true,
+                  boundaryMargin:
+                    const EdgeInsets.symmetric(horizontal: 120, vertical: 400), // 画面外にどれくらい動かせるか
                     minScale: 0.5, // 最小50%まで縮小
                     maxScale: 3.0, // 最大300%まで拡大
                     child: Padding(
                         padding: const EdgeInsets.all(8.0),
-                        child: GameGrid(
-                            cards: data['cards'],
-                            myPlayerId: widget.myPlayerId,
-                            turn: turn,
-                            firstSelectedIndex:
-                                data['firstSelectedIndex'] ?? -1,
-                            highlightedIndices:
-                                (data['highlightedIndices'] as List? ?? [])
-                                    .cast<int>(),
-                            tempRevealedIndices: _tempRevealed,
-                            selectedForExchange: _selectedIndices,
-                            activeEffect: data['activeEffect'],
-                            onTap: (i) => _handleTap(i, data))),
+                    child: SizedBox(
+                      width: MediaQuery.of(context).size.width - 16,
+                      child: GameGrid(
+                        cards: data['cards'],
+                        myPlayerId: widget.myPlayerId,
+                        turn: turn,
+                        isTallLayout: isTallLayout,
+                        firstSelectedIndex:
+                          data['firstSelectedIndex'] ?? -1,
+                        highlightedIndices:
+                          (data['highlightedIndices'] as List? ?? [])
+                            .cast<int>(),
+                        tempRevealedIndices: _tempRevealed,
+                        selectedForExchange: _selectedIndices,
+                        activeEffect: data['activeEffect'],
+                        onTap: (i) => _handleTap(i, data)))),
                   ),
                 ),
               ],
@@ -304,20 +323,4 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
     );
   }
 
-  void _showResult(int win, Map players) {
-    showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (c) => AlertDialog(
-                title: const Text("終了"),
-                content: const Text("ゲームが終了しました。"),
-                actions: [
-                  TextButton(
-                      onPressed: () async {
-                        await FirestoreService.resetBoardOnly(widget.roomId);
-                        if (mounted) Navigator.pop(c);
-                      },
-                      child: const Text("再戦"))
-                ]));
-  }
 }

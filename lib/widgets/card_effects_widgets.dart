@@ -1,4 +1,3 @@
-import 'dart:math';
 import 'package:flutter/material.dart';
 
 // --- 演出用関数（エフェクト表示） ---
