@@ -4,18 +4,62 @@ import '../models/player_model.dart';
 class FirestoreService {
   static final _db = FirebaseFirestore.instance;
 
+  static List<Map<String, dynamic>> _buildShuffledCards() {
+    final suits = ['♠', '♥', '♦', '♣'];
+    final ranks = [
+      'A',
+      '2',
+      '3',
+      '4',
+      '5',
+      '6',
+      '7',
+      '8',
+      '9',
+      '10',
+      'J',
+      'Q',
+      'K'
+    ];
+    final cards = <Map<String, dynamic>>[];
+    for (final s in suits) {
+      for (final r in ranks) {
+        cards.add({
+          'rank': r,
+          'suit': s,
+          'isFaceUp': false,
+          'isTaken': false,
+          'permViewers': []
+        });
+      }
+    }
+    cards.shuffle();
+    return cards;
+  }
+
+  static Future<void> ensureRoomExists(String roomId) async {
+    final docRef = _db.collection('rooms').doc(roomId);
+    final snap = await docRef.get();
+    if (snap.exists) return;
+    await resetRoomFull8(roomId);
+  }
+
   static Future<int?> getEmptySlot(String roomId) async {
     final snap = await _db.collection('rooms').doc(roomId).get();
     if (!snap.exists) return 1;
     final players = snap.data()?['players'] as Map? ?? {};
     for (int i = 1; i <= 8; i++) {
-      if (players[i.toString()] == null || players[i.toString()]['isActive'] == false) return i;
+      if (players[i.toString()] == null ||
+          players[i.toString()]['isActive'] == false) return i;
     }
     return null;
   }
 
   static Future<void> updatePlayer(String roomId, PlayerModel p) async {
-    await _db.collection('rooms').doc(roomId).update({'players.${p.id}': p.toMap()});
+    await _db
+        .collection('rooms')
+        .doc(roomId)
+        .update({'players.${p.id}': p.toMap()});
   }
 
   // 退出 & 誰もいなければリセット
@@ -36,7 +80,8 @@ class FirestoreService {
     }
   }
 
-  static Future<void> updateActiveStatus(String roomId, int playerId, bool isActive) async {
+  static Future<void> updateActiveStatus(
+      String roomId, int playerId, bool isActive) async {
     await _db.collection('rooms').doc(roomId).update({
       'players.$playerId.isActive': isActive,
       'players.$playerId.isReady': false,
@@ -44,16 +89,8 @@ class FirestoreService {
   }
 
   static Future<void> resetRoomFull8(String roomId) async {
-    final suits = ['♠','♥','♦','♣'];
-    final ranks = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
-    List<Map<String, dynamic>> cards = [];
-    for (var s in suits) {
-      for (var r in ranks) {
-        cards.add({'rank': r, 'suit': s, 'isFaceUp': false, 'isTaken': false, 'permViewers': []});
-      }
-    }
     await _db.collection('rooms').doc(roomId).set({
-      'cards': cards..shuffle(),
+      'cards': _buildShuffledCards(),
       'players': {},
       'currentTurn': 1,
       'turnCount': 1,
@@ -69,7 +106,10 @@ class FirestoreService {
     final snap = await _db.collection('rooms').doc(roomId).get();
     if (!snap.exists) return;
     Map players = Map.from(snap.data()!['players']);
-    players.forEach((k, v) { v['score'] = 0; v['isReady'] = false; });
+    players.forEach((k, v) {
+      v['score'] = 0;
+      v['isReady'] = false;
+    });
     await resetRoomFull8(roomId);
     await _db.collection('rooms').doc(roomId).update({'players': players});
   }

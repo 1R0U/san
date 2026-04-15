@@ -5,6 +5,7 @@ class GameGrid extends StatelessWidget {
   final List<dynamic> cards;
   final int myPlayerId;
   final int turn;
+  final bool isTallLayout;
   final int firstSelectedIndex;
   final List<int> highlightedIndices;
   final List<int> tempRevealedIndices;
@@ -17,6 +18,7 @@ class GameGrid extends StatelessWidget {
     required this.cards,
     required this.myPlayerId,
     required this.turn,
+    required this.isTallLayout,
     required this.firstSelectedIndex,
     required this.highlightedIndices,
     required this.tempRevealedIndices,
@@ -38,52 +40,79 @@ class GameGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GridView.builder(
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 13,
-        mainAxisSpacing: 2,
-        crossAxisSpacing: 2,
-        childAspectRatio: 0.75,
-      ),
-      itemCount: cards.length,
-      itemBuilder: (context, index) {
-        Map displayCard = Map.from(cards[index]);
-        List<dynamic> permViewers = displayCard['permViewers'] ?? [];
-        bool isPermanentlyRevealedToMe = permViewers.contains(myPlayerId);
+    final crossAxisCount = isTallLayout ? 4 : 13;
+    const mainAxisSpacing = 2.0;
+    const crossAxisSpacing = 2.0;
+    const childAspectRatio = 0.75;
 
-        Color? hColor;
+    return LayoutBuilder(builder: (context, constraints) {
+      final baseWidth = constraints.maxWidth.isFinite
+          ? constraints.maxWidth
+          : MediaQuery.of(context).size.width;
+      final safeWidth = baseWidth > 0 ? baseWidth : 1.0;
+      final rows = (cards.length / crossAxisCount).ceil();
+      final cardWidth =
+          (safeWidth - (crossAxisCount - 1) * crossAxisSpacing) /
+              crossAxisCount;
+      final cardHeight = cardWidth / childAspectRatio;
+      final gridHeight = rows * cardHeight + (rows - 1) * mainAxisSpacing;
 
-        // 優先順位に基づいたハイライト色
-        if (selectedForExchange.contains(index)) {
-          hColor = Colors.orangeAccent;
-        } else if (index == firstSelectedIndex) {
-          hColor = Colors.redAccent;
-        } else if (tempRevealedIndices.contains(index)) {
-          hColor = Colors.pinkAccent;
-        } else if (highlightedIndices.contains(index)) {
-          hColor = Colors.yellowAccent;
-        } else if (activeEffect == 'nine') {
-          hColor = _getNineZoneColor(index);
-        } else if (isPermanentlyRevealedToMe) {
-          hColor = Colors.orange;
-        }
-
-        // 一時透視 or 永久透視なら表にする
-        if (tempRevealedIndices.contains(index) || isPermanentlyRevealedToMe) {
-          displayCard['isFaceUp'] = true;
-        }
-
-        return GestureDetector(
-          onTap: () => onTap(index),
-          child: CardMini(
-            card: displayCard,
-            isMyTurn: turn == myPlayerId,
-            pColor: turn == 1 ? Colors.blue : Colors.red,
-            highlightColor: hColor,
+      return SizedBox(
+        height: gridHeight,
+        child: GridView.builder(
+          physics: const NeverScrollableScrollPhysics(),
+          padding: EdgeInsets.zero,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            mainAxisSpacing: mainAxisSpacing,
+            crossAxisSpacing: crossAxisSpacing,
+            childAspectRatio: childAspectRatio,
           ),
-        );
-      },
-    );
+          itemCount: cards.length,
+          itemBuilder: (context, visualIndex) {
+            final actualIndex = isTallLayout
+                ? ((visualIndex % 4) * 13 + (visualIndex ~/ 4))
+                : visualIndex;
+
+            Map displayCard = Map.from(cards[actualIndex]);
+            List<dynamic> permViewers = displayCard['permViewers'] ?? [];
+            bool isPermanentlyRevealedToMe = permViewers.contains(myPlayerId);
+
+            Color? hColor;
+
+            // 優先順位に基づいたハイライト色
+            if (selectedForExchange.contains(actualIndex)) {
+              hColor = Colors.orangeAccent;
+            } else if (actualIndex == firstSelectedIndex) {
+              hColor = Colors.redAccent;
+            } else if (tempRevealedIndices.contains(actualIndex)) {
+              hColor = Colors.pinkAccent;
+            } else if (highlightedIndices.contains(actualIndex)) {
+              hColor = Colors.yellowAccent;
+            } else if (activeEffect == 'nine') {
+              hColor = _getNineZoneColor(actualIndex);
+            } else if (isPermanentlyRevealedToMe) {
+              hColor = Colors.orange;
+            }
+
+            // 一時透視 or 永久透視なら表にする
+            if (tempRevealedIndices.contains(actualIndex) ||
+                isPermanentlyRevealedToMe) {
+              displayCard['isFaceUp'] = true;
+            }
+
+            return GestureDetector(
+              onTap: () => onTap(actualIndex),
+              child: CardMini(
+                card: displayCard,
+                isMyTurn: turn == myPlayerId,
+                pColor: turn == myPlayerId ? Colors.blue : Colors.red,
+                highlightColor: hColor,
+              ),
+            );
+          },
+        ),
+      );
+    });
   }
 }

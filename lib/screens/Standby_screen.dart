@@ -105,6 +105,7 @@ class StandbyScreen extends StatelessWidget {
                             PlayerModel(
                                 id: myPlayerId,
                                 name: meData.name,
+                            layoutMode: meData.layoutMode,
                                 isActive: true,
                                 isReady: !meData.isReady)),
                         child: Text(meData.isReady ? "解除" : "準備OK"),
@@ -149,6 +150,7 @@ class StandbyScreen extends StatelessWidget {
                   PlayerModel(
                       id: me.id,
                       name: c.text,
+                    layoutMode: me.layoutMode,
                       isActive: true,
                       isReady: me.isReady));
               Navigator.pop(ctx);

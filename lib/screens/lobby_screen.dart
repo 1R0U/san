@@ -17,6 +17,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final rid = _controller.text.trim();
     if (rid.isEmpty) return;
     setState(() => _loading = true);
+
+    await FirestoreService.ensureRoomExists(rid);
     final slot = await FirestoreService.getEmptySlot(rid);
     if (slot == null) {
       if (mounted)
@@ -25,9 +27,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
       setState(() => _loading = false);
       return;
     }
-    if (slot == 1) await FirestoreService.resetRoomFull8(rid);
+
     await FirestoreService.updatePlayer(
         rid, PlayerModel(id: slot, name: "プレイヤー$slot", isActive: true));
+
     if (mounted)
       Navigator.push(
           context,
@@ -46,7 +49,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           children: [
             const Icon(Icons.style, size: 120, color: Colors.white),
             const SizedBox(height: 40),
-            const Text("CARD MATCH ONLINE",
+            const Text("真経衰弱",
                 style: TextStyle(
                     color: Colors.white,
                     fontSize: 24,
@@ -58,13 +61,31 @@ class _LobbyScreenState extends State<LobbyScreen> {
               child: TextField(
                 controller: _controller,
                 textAlign: TextAlign.center,
+
+                // ★ 1. ユーザーが入力する文字の色
+                style: const TextStyle(
+                  color: Colors.black, // 入力文字を青にする
+                  fontWeight: FontWeight.bold, // 太字にするとよりハッキリします
+                ),
+
+                // ★ 2. カーソル（点滅する棒）の色
+                cursorColor: Colors.blue,
+
                 decoration: InputDecoration(
                   hintText: "ENTER ROOM ID",
+
+                  // ★ 3. ヒントテキスト（入力前の中身）の色
+                  hintStyle: TextStyle(
+                    color: Colors.black.withOpacity(0.5), // 入力文字より少し薄くするのが一般的
+                  ),
+
                   filled: true,
                   fillColor: Colors.white,
                   border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(30),
-                      borderSide: BorderSide.none),
+                    borderRadius: BorderRadius.circular(30),
+                    borderSide: const BorderSide(
+                        color: Colors.blue, width: 2), // 枠も合わせると綺麗
+                  ),
                 ),
               ),
             ),
@@ -81,7 +102,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(30)),
                     ),
-                    child: const Text("JOIN GAME",
+                    child: const Text("部屋に入る",
                         style: TextStyle(
                             fontSize: 18, fontWeight: FontWeight.bold)),
                   ),
