@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/firestore_service.dart';
 import '../models/player_model.dart';
-import 'standby_screen.dart';
+import 'Standby_screen.dart';
 
 class LobbyScreen extends StatefulWidget {
   const LobbyScreen({super.key});

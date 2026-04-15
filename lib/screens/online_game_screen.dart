@@ -218,7 +218,7 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false,
-      onPopInvokedWithResult: (didPop, _) async {
+      onPopInvoked: (didPop) async {
         if (didPop) return;
         final exit = await showDialog<bool>(
             context: context,

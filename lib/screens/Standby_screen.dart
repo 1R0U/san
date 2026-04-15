@@ -15,7 +15,7 @@ class StandbyScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false,
-      onPopInvokedWithResult: (didPop, _) async {
+      onPopInvoked: (didPop) async {
         if (didPop) return;
         await FirestoreService.leaveRoomAndCleanup(roomId, myPlayerId);
         if (context.mounted) Navigator.pop(context);
