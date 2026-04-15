@@ -5,8 +5,6 @@ import '../widgets/card_effects_widgets.dart';
 import '../widgets/game_header.dart';
 import '../widgets/game_grid.dart';
 import '../services/firestore_service.dart';
-import '../models/player_model.dart';
-import 'standby_screen.dart';
 
 class OnlineGameScreen extends StatefulWidget {
   final String roomId;
@@ -325,20 +323,4 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
     );
   }
 
-  void _showResult(int win, Map players) {
-    showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (c) => AlertDialog(
-                title: const Text("終了"),
-                content: const Text("ゲームが終了しました。"),
-                actions: [
-                  TextButton(
-                      onPressed: () async {
-                        await FirestoreService.resetBoardOnly(widget.roomId);
-                        if (mounted) Navigator.pop(c);
-                      },
-                      child: const Text("再戦"))
-                ]));
-  }
 }
