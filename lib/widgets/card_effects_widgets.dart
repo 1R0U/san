@@ -116,7 +116,23 @@ class GameEffectsLogic {
     return int.tryParse(rank) ?? 0;
   }
 
-  static int getNextTurn(int currentId, Map<String, dynamic> players) {
+  static int getNextTurn(
+      int currentId, Map<String, dynamic> players, List<int>? turnOrder) {
+    if (turnOrder != null && turnOrder.isNotEmpty) {
+      final activeSet = players.values
+          .where((p) => p['isActive'] == true)
+          .map<int>((p) => p['id'] as int)
+          .toSet();
+      final orderedActive = turnOrder.where(activeSet.contains).toList();
+      if (orderedActive.isNotEmpty) {
+        final idx = orderedActive.indexOf(currentId);
+        if (idx >= 0) {
+          return orderedActive[(idx + 1) % orderedActive.length];
+        }
+        return orderedActive.first;
+      }
+    }
+
     final activeIds = players.values
         .where((p) => p['isActive'] == true)
         .map<int>((p) => p['id'] as int)

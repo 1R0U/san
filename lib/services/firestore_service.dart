@@ -44,6 +44,58 @@ class FirestoreService {
     await resetRoomFull8(roomId);
   }
 
+  static Future<void> addCpuPlayers(
+      String roomId, int cpuCount, int cpuLevel) async {
+    if (cpuCount <= 0) return;
+    final docRef = _db.collection('rooms').doc(roomId);
+
+    await _db.runTransaction((tx) async {
+      final snap = await tx.get(docRef);
+      if (!snap.exists) return;
+
+      final players = Map<String, dynamic>.from(snap.data()?['players'] ?? {});
+      int added = 0;
+
+      for (int slot = 1; slot <= 8 && added < cpuCount; slot++) {
+        final current = players[slot.toString()];
+        final isEmpty = current == null || current['isActive'] == false;
+        if (!isEmpty) continue;
+
+        players[slot.toString()] = PlayerModel(
+          id: slot,
+          name: 'CPU $slot',
+          isCPU: true,
+          cpuLevel: cpuLevel,
+          isActive: true,
+          isReady: true,
+        ).toMap();
+        added++;
+      }
+
+      tx.update(docRef, {'players': players});
+    });
+  }
+
+  static Future<bool> claimCpuMove(String roomId, int turn) async {
+    final docRef = _db.collection('rooms').doc(roomId);
+    return _db.runTransaction<bool>((tx) async {
+      final snap = await tx.get(docRef);
+      if (!snap.exists) return false;
+      final data = snap.data() as Map<String, dynamic>;
+      if ((data['currentTurn'] ?? 1) != turn) return false;
+      if ((data['cpuMoveLock'] ?? 0) == turn) return false;
+      final players = Map<String, dynamic>.from(data['players'] ?? {});
+      final current = players[turn.toString()];
+      if (current == null || current['isCPU'] != true) return false;
+      tx.update(docRef, {'cpuMoveLock': turn});
+      return true;
+    });
+  }
+
+  static Future<void> releaseCpuMove(String roomId) async {
+    await _db.collection('rooms').doc(roomId).update({'cpuMoveLock': 0});
+  }
+
   static Future<int?> getEmptySlot(String roomId) async {
     final snap = await _db.collection('rooms').doc(roomId).get();
     if (!snap.exists) return 1;
@@ -92,8 +144,12 @@ class FirestoreService {
     await _db.collection('rooms').doc(roomId).set({
       'cards': _buildShuffledCards(),
       'players': {},
+      'cpuCount': 0,
+      'cpuLevel': 1,
+      'turnOrder': [],
       'currentTurn': 1,
       'turnCount': 1,
+      'cpuMoveLock': 0,
       'isStarted': false,
       'winner': 0,
       'firstSelectedIndex': -1,

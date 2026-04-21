@@ -37,8 +37,10 @@ class StandbyScreen extends StatelessWidget {
           final meData = PlayerModel.fromMap(playersMap[myPlayerId.toString()]);
           final activePlayers =
               playersMap.values.where((p) => p['isActive'] == true).toList();
+          final selectedCpuCount = (data['cpuCount'] ?? 0) as int;
+          final cpuLevel = (data['cpuLevel'] ?? 1) as int;
           final allReady = activePlayers.every((p) => p['isReady'] == true) &&
-              activePlayers.length >= 2;
+              activePlayers.length + selectedCpuCount >= 2;
 
           if (data['isStarted'] == true) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -96,6 +98,52 @@ class StandbyScreen extends StatelessWidget {
                   padding: const EdgeInsets.all(30),
                   child: Column(
                     children: [
+                      if (myPlayerId == 1)
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            DropdownButton<int>(
+                              value: selectedCpuCount,
+                              items: const [
+                                DropdownMenuItem(
+                                    value: 0, child: Text('CPUなし')),
+                                DropdownMenuItem(
+                                    value: 1, child: Text('CPU 1人')),
+                                DropdownMenuItem(
+                                    value: 2, child: Text('CPU 2人')),
+                                DropdownMenuItem(
+                                    value: 3, child: Text('CPU 3人')),
+                                DropdownMenuItem(
+                                    value: 4, child: Text('CPU 4人')),
+                              ],
+                              onChanged: (value) async {
+                                if (value == null) return;
+                                await FirebaseFirestore.instance
+                                    .collection('rooms')
+                                    .doc(roomId)
+                                    .update({'cpuCount': value});
+                              },
+                            ),
+                            const SizedBox(width: 12),
+                            DropdownButton<int>(
+                              value: cpuLevel,
+                              items: const [
+                                DropdownMenuItem(value: 1, child: Text('Easy')),
+                                DropdownMenuItem(
+                                    value: 2, child: Text('Normal')),
+                                DropdownMenuItem(value: 3, child: Text('Hard')),
+                              ],
+                              onChanged: (value) async {
+                                if (value == null) return;
+                                await FirebaseFirestore.instance
+                                    .collection('rooms')
+                                    .doc(roomId)
+                                    .update({'cpuLevel': value});
+                              },
+                            ),
+                          ],
+                        ),
+                      const SizedBox(height: 12),
                       ElevatedButton(
                         style: ElevatedButton.styleFrom(
                             backgroundColor:
@@ -105,17 +153,40 @@ class StandbyScreen extends StatelessWidget {
                             PlayerModel(
                                 id: myPlayerId,
                                 name: meData.name,
-                            layoutMode: meData.layoutMode,
+                                layoutMode: meData.layoutMode,
                                 isActive: true,
                                 isReady: !meData.isReady)),
                         child: Text(meData.isReady ? "解除" : "準備OK"),
                       ),
                       if (myPlayerId == 1 && allReady)
                         TextButton(
-                            onPressed: () => FirebaseFirestore.instance
-                                .collection('rooms')
-                                .doc(roomId)
-                                .update({'isStarted': true}),
+                            onPressed: () async {
+                              await FirestoreService.addCpuPlayers(
+                                  roomId,
+                                  (data['cpuCount'] ?? 0) as int,
+                                  (data['cpuLevel'] ?? 1) as int);
+                              final updatedSnap = await FirebaseFirestore
+                                  .instance
+                                  .collection('rooms')
+                                  .doc(roomId)
+                                  .get();
+                              final updatedPlayers = Map<String, dynamic>.from(
+                                  updatedSnap.data()?['players'] ?? {});
+                              final ids = updatedPlayers.values
+                                  .where((p) => p['isActive'] == true)
+                                  .map<int>((p) => p['id'] as int)
+                                  .toList()
+                                ..shuffle();
+                              await FirebaseFirestore.instance
+                                  .collection('rooms')
+                                  .doc(roomId)
+                                  .update({
+                                'isStarted': true,
+                                'turnOrder': ids,
+                                'currentTurn': ids.first,
+                                'turnCount': 1,
+                              });
+                            },
                             child: const Text("開始！",
                                 style: TextStyle(
                                     color: Colors.yellow,
@@ -150,7 +221,7 @@ class StandbyScreen extends StatelessWidget {
                   PlayerModel(
                       id: me.id,
                       name: c.text,
-                    layoutMode: me.layoutMode,
+                      layoutMode: me.layoutMode,
                       isActive: true,
                       isReady: me.isReady));
               Navigator.pop(ctx);

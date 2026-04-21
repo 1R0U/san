@@ -4,18 +4,30 @@ class GameHeader extends StatelessWidget {
   final int turn; // ★ 引数名は「turn」
   final Map<String, dynamic> players;
   final int myId;
+  final List<int> turnOrder;
 
   const GameHeader(
       {super.key,
       required this.turn,
       required this.players,
-      required this.myId});
+      required this.myId,
+      required this.turnOrder});
 
   @override
   Widget build(BuildContext context) {
-    // アクティブなプレイヤーをID順に並べる
+    // アクティブなプレイヤーをプレイ順（turnOrder）で並べる
     final pList = players.values.where((p) => p['isActive'] == true).toList()
-      ..sort((a, b) => a['id'].compareTo(b['id']));
+      ..sort((a, b) {
+        final aId = a['id'] as int;
+        final bId = b['id'] as int;
+        final aIdx = turnOrder.indexOf(aId);
+        final bIdx = turnOrder.indexOf(bId);
+
+        if (aIdx == -1 && bIdx == -1) return aId.compareTo(bId);
+        if (aIdx == -1) return 1;
+        if (bIdx == -1) return -1;
+        return aIdx.compareTo(bIdx);
+      });
 
     return Container(
       height: 85,
