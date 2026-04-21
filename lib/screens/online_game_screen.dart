@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -20,6 +21,7 @@ class OnlineGameScreen extends StatefulWidget {
 class _OnlineGameScreenState extends State<OnlineGameScreen> {
   bool _isProcessing = false;
   Timestamp? _lastProcessedTimestamp;
+  int _lastCpuTurnHandled = 0;
 
   // 特殊モード（3, 4, 7, 8の効果）の状態管理
   bool _isExchangeMode = false;
@@ -35,6 +37,116 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
         widget.roomId, widget.myPlayerId);
     if (mounted) {
       Navigator.of(context).popUntil((route) => route.isFirst);
+    }
+  }
+
+  Future<void> _handleCpuTurn(Map<String, dynamic> data) async {
+    final currentTurn = data['currentTurn'] ?? 1;
+    if (currentTurn == widget.myPlayerId) return;
+    if (_lastCpuTurnHandled == currentTurn) return;
+
+    final players = Map<String, dynamic>.from(data['players'] ?? {});
+    final currentPlayer =
+        players[currentTurn.toString()] as Map<String, dynamic>?;
+    if (currentPlayer == null || currentPlayer['isCPU'] != true) return;
+
+    final claimed =
+        await FirestoreService.claimCpuMove(widget.roomId, currentTurn);
+    if (!claimed) return;
+    _lastCpuTurnHandled = currentTurn;
+
+    try {
+      await Future.delayed(const Duration(milliseconds: 700));
+
+      final freshSnap = await FirebaseFirestore.instance
+          .collection('rooms')
+          .doc(widget.roomId)
+          .get();
+      if (!freshSnap.exists) return;
+      final freshData = freshSnap.data() as Map<String, dynamic>;
+      final cards = List<dynamic>.from(freshData['cards'] ?? []);
+      final freshPlayers =
+          Map<String, dynamic>.from(freshData['players'] ?? {});
+      final cpuPlayer =
+          freshPlayers[currentTurn.toString()] as Map<String, dynamic>?;
+      if (cpuPlayer == null || cpuPlayer['isCPU'] != true) return;
+
+      final level = (cpuPlayer['cpuLevel'] ?? 1) as int;
+      final available = <int>[];
+      for (var i = 0; i < cards.length; i++) {
+        if (cards[i]['isTaken'] == true) continue;
+        if (cards[i]['isFaceUp'] == true) continue;
+        available.add(i);
+      }
+      if (available.isEmpty) return;
+
+      available.shuffle();
+      int firstIndex = available.first;
+      final candidates = available.where((i) => i != firstIndex).toList();
+      if (candidates.isEmpty) return;
+
+      int secondIndex = candidates.first;
+      if (level == 2 && candidates.length > 1) {
+        secondIndex = candidates[Random().nextInt(candidates.length)];
+      } else if (level == 3 && candidates.length > 1) {
+        secondIndex = candidates[0];
+      }
+
+      final docRef =
+          FirebaseFirestore.instance.collection('rooms').doc(widget.roomId);
+
+      cards[firstIndex]['isFaceUp'] = true;
+      await docRef.update({
+        'cards': cards,
+        'firstSelectedIndex': firstIndex,
+      });
+      await Future.delayed(const Duration(milliseconds: 1200));
+
+      final secondSnap = await docRef.get();
+      if (!secondSnap.exists) return;
+      final secondData = secondSnap.data() as Map<String, dynamic>;
+      final secondCards = List<dynamic>.from(secondData['cards'] ?? []);
+      if (secondCards[firstIndex]['isTaken'] == true) return;
+
+      secondCards[secondIndex]['isFaceUp'] = true;
+      await docRef.update({'cards': secondCards});
+
+      await Future.delayed(const Duration(milliseconds: 1300));
+      final afterSnap = await docRef.get();
+      if (!afterSnap.exists) return;
+      final afterData = afterSnap.data() as Map<String, dynamic>;
+      final afterCards = List<dynamic>.from(afterData['cards'] ?? []);
+      final afterPlayers =
+          Map<String, dynamic>.from(afterData['players'] ?? {});
+
+      final match =
+          afterCards[firstIndex]['rank'] == afterCards[secondIndex]['rank'];
+      if (match) {
+        afterCards[firstIndex]['isTaken'] = true;
+        afterCards[secondIndex]['isTaken'] = true;
+        afterPlayers[currentTurn.toString()]['score'] =
+            (afterPlayers[currentTurn.toString()]['score'] ?? 0) +
+                GameEffectsLogic.getCardPoints(afterCards[secondIndex]['rank']);
+      } else {
+        afterCards[firstIndex]['isFaceUp'] = false;
+        afterCards[secondIndex]['isFaceUp'] = false;
+      }
+
+      final turnOrder = (afterData['turnOrder'] as List? ?? []).cast<int>();
+      final nextTurn = match
+          ? currentTurn
+          : GameEffectsLogic.getNextTurn(currentTurn, afterPlayers, turnOrder);
+
+      await docRef.update({
+        'cards': afterCards,
+        'players': afterPlayers,
+        'firstSelectedIndex': -1,
+        'currentTurn': nextTurn,
+        'turnCount': (afterData['turnCount'] ?? 1) + (match ? 0 : 1),
+        'cpuMoveLock': 0,
+      });
+    } finally {
+      await FirestoreService.releaseCpuMove(widget.roomId);
     }
   }
 
@@ -146,8 +258,9 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
           });
         } else {
           cards[first]['isFaceUp'] = cards[index]['isFaceUp'] = false;
-          int nextTurn =
-              GameEffectsLogic.getNextTurn(widget.myPlayerId, playersMap);
+          final turnOrder = (data['turnOrder'] as List? ?? []).cast<int>();
+          int nextTurn = GameEffectsLogic.getNextTurn(
+              widget.myPlayerId, playersMap, turnOrder);
           await docRef.update({
             'cards': cards,
             'firstSelectedIndex': -1,
@@ -246,8 +359,10 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
                 body: Center(child: CircularProgressIndicator()));
           final data = snapshot.data!.data() as Map<String, dynamic>;
           final players = Map<String, dynamic>.from(data['players'] ?? {});
-          final me = players[widget.myPlayerId.toString()] as Map<String, dynamic>?;
+          final me =
+              players[widget.myPlayerId.toString()] as Map<String, dynamic>?;
           final isTallLayout = (me?['layoutMode'] ?? 'wide') == 'tall';
+          final turnOrder = (data['turnOrder'] as List? ?? []).cast<int>();
           final turn = data['currentTurn'] ?? 1;
           final isMyTurn = turn == widget.myPlayerId;
           Timestamp? ts = data['effectTimestamp'];
@@ -258,6 +373,12 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
             WidgetsBinding.instance.addPostFrameCallback((_) =>
                 _handleEffectTrigger(data['latestEffect'] ?? '',
                     (data['effectData'] as List? ?? []).cast<int>(), isMyTurn));
+          }
+          if (data['currentTurn'] != widget.myPlayerId) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              _handleCpuTurn(data);
+            });
           }
           return Scaffold(
             backgroundColor: const Color(0xFF0A3D14),
@@ -276,43 +397,48 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
                     await FirebaseFirestore.instance
                         .collection('rooms')
                         .doc(widget.roomId)
-                        .update({'players.${widget.myPlayerId}.layoutMode': next});
+                        .update(
+                            {'players.${widget.myPlayerId}.layoutMode': next});
                   },
-                  icon: Icon(isTallLayout ? Icons.view_week : Icons.view_column),
+                  icon:
+                      Icon(isTallLayout ? Icons.view_week : Icons.view_column),
                 ),
               ],
             ),
             body: Column(
               children: [
                 GameHeader(
-                    turn: turn, players: players, myId: widget.myPlayerId),
+                    turn: turn,
+                    players: players,
+                    myId: widget.myPlayerId,
+                    turnOrder: turnOrder),
                 // ★ 拡大・縮小・スライドを可能にするウィジェット
                 Expanded(
                   child: InteractiveViewer(
-                  constrained: false,
-                  panEnabled: true,
-                  boundaryMargin:
-                    const EdgeInsets.symmetric(horizontal: 120, vertical: 400), // 画面外にどれくらい動かせるか
+                    constrained: false,
+                    panEnabled: true,
+                    boundaryMargin: const EdgeInsets.symmetric(
+                        horizontal: 120, vertical: 400), // 画面外にどれくらい動かせるか
                     minScale: 0.5, // 最小50%まで縮小
                     maxScale: 3.0, // 最大300%まで拡大
                     child: Padding(
                         padding: const EdgeInsets.all(8.0),
-                    child: SizedBox(
-                      width: MediaQuery.of(context).size.width - 16,
-                      child: GameGrid(
-                        cards: data['cards'],
-                        myPlayerId: widget.myPlayerId,
-                        turn: turn,
-                        isTallLayout: isTallLayout,
-                        firstSelectedIndex:
-                          data['firstSelectedIndex'] ?? -1,
-                        highlightedIndices:
-                          (data['highlightedIndices'] as List? ?? [])
-                            .cast<int>(),
-                        tempRevealedIndices: _tempRevealed,
-                        selectedForExchange: _selectedIndices,
-                        activeEffect: data['activeEffect'],
-                        onTap: (i) => _handleTap(i, data)))),
+                        child: SizedBox(
+                            width: MediaQuery.of(context).size.width - 16,
+                            child: GameGrid(
+                                cards: data['cards'],
+                                myPlayerId: widget.myPlayerId,
+                                turn: turn,
+                                isTallLayout: isTallLayout,
+                                firstSelectedIndex:
+                                    data['firstSelectedIndex'] ?? -1,
+                                highlightedIndices:
+                                    (data['highlightedIndices'] as List? ?? [])
+                                        .cast<int>(),
+                                tempRevealedIndices: _tempRevealed,
+                                selectedForExchange: _selectedIndices,
+                                activeEffect: data['activeEffect'],
+                                onTap: (i) => _handleTap(i, data)))),
                   ),
                 ),
               ],
@@ -322,5 +448,4 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
       ),
     );
   }
-
 }
