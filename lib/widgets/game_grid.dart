@@ -28,7 +28,7 @@ class GameGrid extends StatelessWidget {
   });
 
   Color? _getNineZoneColor(int index) {
-    int crossAxisCount = 13;
+    int crossAxisCount = 12;
     int r = index ~/ crossAxisCount;
     int c = index % crossAxisCount;
     if (r < 2 && c < 6) return Colors.cyanAccent.withOpacity(0.5);
@@ -40,7 +40,7 @@ class GameGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final crossAxisCount = isTallLayout ? 4 : 13;
+    final crossAxisCount = isTallLayout ? 4 : 12;
     const mainAxisSpacing = 2.0;
     const crossAxisSpacing = 2.0;
     const childAspectRatio = 0.75;
@@ -71,7 +71,7 @@ class GameGrid extends StatelessWidget {
           itemCount: cards.length,
           itemBuilder: (context, visualIndex) {
             final actualIndex = isTallLayout
-                ? ((visualIndex % 4) * 13 + (visualIndex ~/ 4))
+                ? ((visualIndex % 4) * 12 + (visualIndex ~/ 4))
                 : visualIndex;
 
             Map displayCard = Map.from(cards[actualIndex]);

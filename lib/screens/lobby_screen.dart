@@ -3,6 +3,7 @@ import '../services/firestore_service.dart';
 import '../models/player_model.dart';
 import 'Standby_screen.dart';
 import 'local_standby_screen.dart';
+import 'rule_screen.dart';
 
 enum LobbyMode { online, local }
 
@@ -19,8 +20,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   void _join() async {
     if (_mode == LobbyMode.local) {
-      Navigator.push(
-          context, MaterialPageRoute(builder: (_) => const LocalStandbyScreen()));
+      Navigator.push(context,
+          MaterialPageRoute(builder: (_) => const LocalStandbyScreen()));
       return;
     }
 
@@ -53,6 +54,17 @@ class _LobbyScreenState extends State<LobbyScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0A3D14),
+      floatingActionButton: FloatingActionButton(
+        mini: true,
+        backgroundColor: Colors.white24,
+        foregroundColor: Colors.white,
+        tooltip: 'ルール説明',
+        onPressed: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const RuleScreen()),
+        ),
+        child: const Icon(Icons.help_outline),
+      ),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -110,22 +122,22 @@ class _LobbyScreenState extends State<LobbyScreen> {
                   controller: _controller,
                   textAlign: TextAlign.center,
 
-                // ★ 1. ユーザーが入力する文字の色
-                style: const TextStyle(
-                  color: Colors.black, // 入力文字を青にする
-                  fontWeight: FontWeight.bold, // 太字にするとよりハッキリします
-                ),
+                  // ★ 1. ユーザーが入力する文字の色
+                  style: const TextStyle(
+                    color: Colors.black, // 入力文字を青にする
+                    fontWeight: FontWeight.bold, // 太字にするとよりハッキリします
+                  ),
 
-                // ★ 2. カーソル（点滅する棒）の色
-                cursorColor: Colors.blue,
+                  // ★ 2. カーソル（点滅する棒）の色
+                  cursorColor: Colors.blue,
 
                   decoration: InputDecoration(
                     hintText: "ENTER ROOM ID",
 
-                  // ★ 3. ヒントテキスト（入力前の中身）の色
-                  hintStyle: TextStyle(
-                    color: Colors.black.withOpacity(0.5), // 入力文字より少し薄くするのが一般的
-                  ),
+                    // ★ 3. ヒントテキスト（入力前の中身）の色
+                    hintStyle: TextStyle(
+                      color: Colors.black.withOpacity(0.5), // 入力文字より少し薄くするのが一般的
+                    ),
 
                     filled: true,
                     fillColor: Colors.white,
