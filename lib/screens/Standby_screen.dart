@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../services/firestore_service.dart';
 import '../models/player_model.dart';
-import '../widgets/standby_player_card.dart';
+import '../services/firestore_service.dart';
+import '../logic/online_standby_actions.dart';
+import '../widgets/online_standby_view.dart';
 import 'online_game_screen.dart';
 
 class StandbyScreen extends StatelessWidget {
@@ -37,10 +38,35 @@ class StandbyScreen extends StatelessWidget {
           final meData = PlayerModel.fromMap(playersMap[myPlayerId.toString()]);
           final activePlayers =
               playersMap.values.where((p) => p['isActive'] == true).toList();
-          final selectedCpuCount = (data['cpuCount'] ?? 0) as int;
+          final activeHumans = activePlayers
+              .where((p) => (p['isCPU'] ?? false) != true)
+              .toList();
+          final activeCpus = activePlayers
+              .where((p) => (p['isCPU'] ?? false) == true)
+              .toList();
+          final cpuSelectedSlotsMap = Map<String, dynamic>.from(
+              data['cpuSelectedSlots'] as Map<String, dynamic>? ?? {});
+          final selectedCpuSlots = cpuSelectedSlotsMap.entries
+              .where((e) => e.value == true)
+              .map((e) => int.tryParse(e.key) ?? 0)
+              .where((s) => s >= 1 && s <= 8)
+              .toSet();
+          final selectedCpuCount = selectedCpuSlots.length;
           final cpuLevel = (data['cpuLevel'] ?? 1) as int;
-          final allReady = activePlayers.every((p) => p['isReady'] == true) &&
-              activePlayers.length + selectedCpuCount >= 2;
+          final cpuSlotLevels = Map<String, dynamic>.from(
+              data['cpuSlotLevels'] as Map<String, dynamic>? ?? {});
+          final allReady = activeHumans.every((p) => p['isReady'] == true) &&
+              activeHumans.length + selectedCpuCount >= 2;
+
+          final previewCpuSlots = <int>{};
+          if (data['isStarted'] != true) {
+            for (final slot in selectedCpuSlots) {
+              final p = playersMap[slot.toString()];
+              final occupiedByHuman =
+                  p != null && p['isActive'] == true && p['isCPU'] != true;
+              if (!occupiedByHuman) previewCpuSlots.add(slot);
+            }
+          }
 
           if (data['isStarted'] == true) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -54,180 +80,59 @@ class StandbyScreen extends StatelessWidget {
             });
           }
 
-          return Scaffold(
-            backgroundColor: const Color(0xFF0A3D14),
-            appBar: AppBar(
-              title: Text("Room: $roomId"),
-              backgroundColor: Colors.transparent,
-              leading: IconButton(
-                icon: const Icon(Icons.arrow_back),
-                onPressed: () async {
-                  await FirestoreService.leaveRoomAndCleanup(
-                      roomId, myPlayerId);
-                  if (context.mounted) Navigator.pop(context);
-                },
+          return OnlineStandbyView(
+            roomId: roomId,
+            myPlayerId: myPlayerId,
+            meData: meData,
+            playersMap: playersMap,
+            activeHumans: activeHumans.cast<Map<String, dynamic>>(),
+            activeCpus: activeCpus.cast<Map<String, dynamic>>(),
+            selectedCpuSlots: selectedCpuSlots,
+            selectedCpuCount: selectedCpuCount,
+            cpuLevel: cpuLevel,
+            cpuSlotLevels: cpuSlotLevels,
+            allReady: allReady,
+            previewCpuSlots: previewCpuSlots,
+            onBack: () async {
+              await FirestoreService.leaveRoomAndCleanup(roomId, myPlayerId);
+              if (context.mounted) Navigator.pop(context);
+            },
+            onToggleReady: () => FirestoreService.updatePlayer(
+              roomId,
+              PlayerModel(
+                id: myPlayerId,
+                name: meData.name,
+                layoutMode: meData.layoutMode,
+                isActive: true,
+                isReady: !meData.isReady,
               ),
             ),
-            body: Column(
-              children: [
-                Expanded(
-                  child: GridView.builder(
-                    padding: const EdgeInsets.all(20),
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 3,
-                            mainAxisSpacing: 10,
-                            crossAxisSpacing: 10,
-                            childAspectRatio: 0.8),
-                    itemCount: 8,
-                    itemBuilder: (context, i) {
-                      final p = playersMap[(i + 1).toString()];
-                      return StandbyPlayerCard(
-                        label: p?['name'] ?? "空き",
-                        isReady: p?['isReady'] ?? false,
-                        isJoined: p?['isActive'] ?? false,
-                        isMe: myPlayerId == (i + 1),
-                        onEdit: myPlayerId == (i + 1)
-                            ? () => _editName(context, roomId, meData)
-                            : null,
-                      );
-                    },
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.all(30),
-                  child: Column(
-                    children: [
-                      if (myPlayerId == 1)
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            DropdownButton<int>(
-                              value: selectedCpuCount,
-                              items: const [
-                                DropdownMenuItem(
-                                    value: 0, child: Text('CPUなし')),
-                                DropdownMenuItem(
-                                    value: 1, child: Text('CPU 1人')),
-                                DropdownMenuItem(
-                                    value: 2, child: Text('CPU 2人')),
-                                DropdownMenuItem(
-                                    value: 3, child: Text('CPU 3人')),
-                                DropdownMenuItem(
-                                    value: 4, child: Text('CPU 4人')),
-                              ],
-                              onChanged: (value) async {
-                                if (value == null) return;
-                                await FirebaseFirestore.instance
-                                    .collection('rooms')
-                                    .doc(roomId)
-                                    .update({'cpuCount': value});
-                              },
-                            ),
-                            const SizedBox(width: 12),
-                            DropdownButton<int>(
-                              value: cpuLevel,
-                              items: const [
-                                DropdownMenuItem(value: 1, child: Text('Easy')),
-                                DropdownMenuItem(
-                                    value: 2, child: Text('Normal')),
-                                DropdownMenuItem(value: 3, child: Text('Hard')),
-                              ],
-                              onChanged: (value) async {
-                                if (value == null) return;
-                                await FirebaseFirestore.instance
-                                    .collection('rooms')
-                                    .doc(roomId)
-                                    .update({'cpuLevel': value});
-                              },
-                            ),
-                          ],
-                        ),
-                      const SizedBox(height: 12),
-                      ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                            backgroundColor:
-                                meData.isReady ? Colors.orange : Colors.green),
-                        onPressed: () => FirestoreService.updatePlayer(
-                            roomId,
-                            PlayerModel(
-                                id: myPlayerId,
-                                name: meData.name,
-                                layoutMode: meData.layoutMode,
-                                isActive: true,
-                                isReady: !meData.isReady)),
-                        child: Text(meData.isReady ? "解除" : "準備OK"),
-                      ),
-                      if (myPlayerId == 1 && allReady)
-                        TextButton(
-                            onPressed: () async {
-                              await FirestoreService.addCpuPlayers(
-                                  roomId,
-                                  (data['cpuCount'] ?? 0) as int,
-                                  (data['cpuLevel'] ?? 1) as int);
-                              final updatedSnap = await FirebaseFirestore
-                                  .instance
-                                  .collection('rooms')
-                                  .doc(roomId)
-                                  .get();
-                              final updatedPlayers = Map<String, dynamic>.from(
-                                  updatedSnap.data()?['players'] ?? {});
-                              final ids = updatedPlayers.values
-                                  .where((p) => p['isActive'] == true)
-                                  .map<int>((p) => p['id'] as int)
-                                  .toList()
-                                ..shuffle();
-                              await FirebaseFirestore.instance
-                                  .collection('rooms')
-                                  .doc(roomId)
-                                  .update({
-                                'isStarted': true,
-                                'turnOrder': ids,
-                                'currentTurn': ids.first,
-                                'turnCount': 1,
-                              });
-                            },
-                            child: const Text("開始！",
-                                style: TextStyle(
-                                    color: Colors.yellow,
-                                    fontSize: 24,
-                                    fontWeight: FontWeight.bold))),
-                    ],
-                  ),
-                )
-              ],
+            onStart: () async {
+              await FirestoreService.startGameWithCpu(
+                roomId,
+                selectedCpuCount,
+                (data['cpuLevel'] ?? 1) as int,
+              );
+            },
+            onEditName: (slot) => OnlineStandbyActions.editName(context, roomId, meData),
+            onToggleCpuSlot: (slot, enable, defaultLevel, selectedCount) =>
+                OnlineStandbyActions.toggleCpuSlot(
+              roomId,
+              slot,
+              enable,
+              defaultLevel,
+              selectedCount,
+            ),
+            onEditCpuLevel: (slot, currentLevel, defaultLevel) =>
+                OnlineStandbyActions.editCpuLevel(
+              context,
+              roomId,
+              slot,
+              currentLevel,
+              defaultLevel,
             ),
           );
         },
-      ),
-    );
-  }
-
-  void _editName(BuildContext context, String rid, PlayerModel me) {
-    final c = TextEditingController(text: me.name);
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("名前変更"),
-        content: TextField(controller: c, autofocus: true),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx), child: const Text("キャンセル")),
-          TextButton(
-            child: const Text("保存"),
-            onPressed: () {
-              FirestoreService.updatePlayer(
-                  rid,
-                  PlayerModel(
-                      id: me.id,
-                      name: c.text,
-                      layoutMode: me.layoutMode,
-                      isActive: true,
-                      isReady: me.isReady));
-              Navigator.pop(ctx);
-            },
-          ),
-        ],
       ),
     );
   }

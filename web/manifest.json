@@ -1,11 +1,11 @@
 {
-    "name": "card_game",
-    "short_name": "card_game",
+    "name": "真経衰弱",
+    "short_name": "真経衰弱",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "オンライン・ローカル対戦できる新型神経衰弱",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

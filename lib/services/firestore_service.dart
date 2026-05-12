@@ -18,8 +18,7 @@ class FirestoreService {
       '9',
       '10',
       'J',
-      'Q',
-      'K'
+      'Q'
     ];
     final cards = <Map<String, dynamic>>[];
     for (final s in suits) {
@@ -47,6 +46,7 @@ class FirestoreService {
   static Future<void> addCpuPlayers(
       String roomId, int cpuCount, int cpuLevel) async {
     if (cpuCount <= 0) return;
+    cpuCount = cpuCount.clamp(0, 8);
     final docRef = _db.collection('rooms').doc(roomId);
 
     await _db.runTransaction((tx) async {
@@ -76,6 +76,86 @@ class FirestoreService {
     });
   }
 
+  static Future<void> startGameWithCpu(
+      String roomId, int cpuCount, int cpuLevel) async {
+    cpuCount = cpuCount.clamp(0, 8);
+    final docRef = _db.collection('rooms').doc(roomId);
+
+    await _db.runTransaction((tx) async {
+      final snap = await tx.get(docRef);
+      if (!snap.exists) return;
+
+      final data = snap.data() as Map<String, dynamic>;
+      final players = Map<String, dynamic>.from(data['players'] ?? {});
+      final cpuSlotLevels =
+          Map<String, dynamic>.from(data['cpuSlotLevels'] ?? {});
+      final cpuSelectedSlots =
+          Map<String, dynamic>.from(data['cpuSelectedSlots'] ?? {});
+
+      int added = 0;
+      final selectedSlots = cpuSelectedSlots.entries
+          .where((e) => e.value == true)
+          .map((e) => int.tryParse(e.key) ?? 0)
+          .where((s) => s >= 1 && s <= 8)
+          .toList()
+        ..sort();
+
+      for (final slot in selectedSlots) {
+        final current = players[slot.toString()];
+        final isEmpty = current == null || current['isActive'] == false;
+        if (!isEmpty) continue;
+
+        final slotLevel = (cpuSlotLevels['$slot'] ?? cpuLevel) as int;
+
+        players[slot.toString()] = PlayerModel(
+          id: slot,
+          name: 'CPU $slot',
+          isCPU: true,
+          cpuLevel: slotLevel,
+          isActive: true,
+          isReady: true,
+        ).toMap();
+        added++;
+      }
+
+      if (added < cpuCount) {
+        for (int slot = 1; slot <= 8 && added < cpuCount; slot++) {
+          final current = players[slot.toString()];
+          final isEmpty = current == null || current['isActive'] == false;
+          if (!isEmpty) continue;
+
+          final slotLevel = (cpuSlotLevels['$slot'] ?? cpuLevel) as int;
+          players[slot.toString()] = PlayerModel(
+            id: slot,
+            name: 'CPU $slot',
+            isCPU: true,
+            cpuLevel: slotLevel,
+            isActive: true,
+            isReady: true,
+          ).toMap();
+          added++;
+        }
+      }
+
+      final ids = players.values
+          .where((p) => p['isActive'] == true)
+          .map<int>((p) => p['id'] as int)
+          .toList()
+        ..shuffle();
+      if (ids.isEmpty) return;
+
+      tx.update(docRef, {
+        'players': players,
+        'isStarted': true,
+        'turnOrder': ids,
+        'currentTurn': ids.first,
+        'turnCount': 1,
+        'cpuMoveLock': 0,
+        'cpuMoveLockAt': null,
+      });
+    });
+  }
+
   static Future<bool> claimCpuMove(String roomId, int turn) async {
     final docRef = _db.collection('rooms').doc(roomId);
     return _db.runTransaction<bool>((tx) async {
@@ -83,17 +163,34 @@ class FirestoreService {
       if (!snap.exists) return false;
       final data = snap.data() as Map<String, dynamic>;
       if ((data['currentTurn'] ?? 1) != turn) return false;
-      if ((data['cpuMoveLock'] ?? 0) == turn) return false;
+
+      final lockTurn = data['cpuMoveLock'] ?? 0;
+      final lockAt = data['cpuMoveLockAt'];
+      if (lockTurn == turn) {
+        if (lockAt is Timestamp) {
+          final sec = DateTime.now().difference(lockAt.toDate()).inSeconds;
+          if (sec < 8) return false;
+        } else {
+          return false;
+        }
+      }
+
       final players = Map<String, dynamic>.from(data['players'] ?? {});
       final current = players[turn.toString()];
       if (current == null || current['isCPU'] != true) return false;
-      tx.update(docRef, {'cpuMoveLock': turn});
+      tx.update(docRef, {
+        'cpuMoveLock': turn,
+        'cpuMoveLockAt': Timestamp.now(),
+      });
       return true;
     });
   }
 
   static Future<void> releaseCpuMove(String roomId) async {
-    await _db.collection('rooms').doc(roomId).update({'cpuMoveLock': 0});
+    await _db.collection('rooms').doc(roomId).update({
+      'cpuMoveLock': 0,
+      'cpuMoveLockAt': null,
+    });
   }
 
   static Future<int?> getEmptySlot(String roomId) async {
@@ -146,10 +243,13 @@ class FirestoreService {
       'players': {},
       'cpuCount': 0,
       'cpuLevel': 1,
+      'cpuSlotLevels': {},
+      'cpuSelectedSlots': {},
       'turnOrder': [],
       'currentTurn': 1,
       'turnCount': 1,
       'cpuMoveLock': 0,
+      'cpuMoveLockAt': null,
       'isStarted': false,
       'winner': 0,
       'firstSelectedIndex': -1,
@@ -161,12 +261,28 @@ class FirestoreService {
   static Future<void> resetBoardOnly(String roomId) async {
     final snap = await _db.collection('rooms').doc(roomId).get();
     if (!snap.exists) return;
-    Map players = Map.from(snap.data()!['players']);
+    final data = snap.data()!;
+    final prevCpuCount = (data['cpuCount'] ?? 0) as int;
+    final prevCpuLevel = (data['cpuLevel'] ?? 1) as int;
+    final prevCpuSlotLevels =
+        Map<String, dynamic>.from(data['cpuSlotLevels'] ?? {});
+    final prevCpuSelectedSlots =
+        Map<String, dynamic>.from(data['cpuSelectedSlots'] ?? {});
+    Map players = Map.from(data['players'] ?? {});
     players.forEach((k, v) {
       v['score'] = 0;
       v['isReady'] = false;
+      if (v['isCPU'] == true) {
+        v['isActive'] = false;
+      }
     });
     await resetRoomFull8(roomId);
-    await _db.collection('rooms').doc(roomId).update({'players': players});
+    await _db.collection('rooms').doc(roomId).update({
+      'players': players,
+      'cpuCount': prevCpuCount,
+      'cpuLevel': prevCpuLevel,
+      'cpuSlotLevels': prevCpuSlotLevels,
+      'cpuSelectedSlots': prevCpuSelectedSlots,
+    });
   }
 }

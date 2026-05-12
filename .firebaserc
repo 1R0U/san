@@ -1,5 +1,15 @@
 {
   "projects": {
     "default": "san-card-game"
-  }
+  },
+  "targets": {
+    "san-card-game": {
+      "hosting": {
+        "app": [
+          "sin-sinkeisuizyaku"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }
