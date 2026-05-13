@@ -32,7 +32,7 @@ class CardMini extends StatelessWidget {
 
       return Container(
         decoration: BoxDecoration(
-          color: isFaceUp ? Colors.white : pColor.withValues(alpha: 0.85),
+          color: isFaceUp ? Colors.white : pColor.withOpacity(0.85),
           borderRadius: BorderRadius.circular(3),
           border: highlightColor != null
               ? Border.all(color: highlightColor!, width: 2.5)
@@ -42,7 +42,7 @@ class CardMini extends StatelessWidget {
           boxShadow: highlightColor != null
               ? [
                   BoxShadow(
-                      color: highlightColor!.withValues(alpha: 0.55),
+                      color: highlightColor!.withOpacity(0.55),
                       blurRadius: 6,
                       spreadRadius: 2)
                 ]
