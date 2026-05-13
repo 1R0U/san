@@ -1,4 +1,3 @@
-// card_mini.dart
 import 'package:flutter/material.dart';
 
 class CardMini extends StatelessWidget {
@@ -19,48 +18,62 @@ class CardMini extends StatelessWidget {
   Widget build(BuildContext context) {
     if (card['isTaken'] ?? false) return const SizedBox.shrink();
 
-    bool isFaceUp = card['isFaceUp'] ?? false;
-    String suit = card['suit'] ?? '';
-    String rank = card['rank'] ?? '';
-    bool isRed = (suit == '♥' || suit == '♦');
+    final isFaceUp = card['isFaceUp'] ?? false;
+    final suit = card['suit'] ?? '';
+    final rank = card['rank'] ?? '';
+    final isRed = (suit == '♥' || suit == '♦' || suit == '♡' || suit == '♢');
+    final textColor = isRed ? Colors.red[700]! : Colors.grey[900]!;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: isFaceUp ? Colors.white : pColor.withOpacity(0.8),
-        borderRadius: BorderRadius.circular(2),
-        border: highlightColor != null
-            ? Border.all(color: highlightColor!, width: 2.5)
-            : (isFaceUp ? Border.all(color: Colors.grey, width: 1) : null),
-        boxShadow: highlightColor != null
-            ? [
-                BoxShadow(
-                    color: highlightColor!.withOpacity(0.6),
-                    blurRadius: 6,
-                    spreadRadius: 2)
-              ]
-            : null,
-      ),
-      child: Center(
-        child: isFaceUp
-            ? Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(suit,
-                      style: TextStyle(
-                          fontSize: 10,
-                          color: isRed ? Colors.red : Colors.black)),
-                  Text(rank,
-                      style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: isRed ? Colors.red : Colors.black,
-                          height: 1)),
-                ],
-              )
-            : Icon(Icons.help_outline,
-                size: 12,
-                color: highlightColor != null ? Colors.white : Colors.white24),
-      ),
-    );
+    return LayoutBuilder(builder: (_, constraints) {
+      // Scale text to card size so it always fits.
+      final cardW = constraints.maxWidth;
+      final suitSize = (cardW * 0.28).clamp(7.0, 14.0);
+      final rankSize = (cardW * 0.34).clamp(9.0, 17.0);
+
+      return Container(
+        decoration: BoxDecoration(
+          color: isFaceUp ? Colors.white : pColor.withValues(alpha: 0.85),
+          borderRadius: BorderRadius.circular(3),
+          border: highlightColor != null
+              ? Border.all(color: highlightColor!, width: 2.5)
+              : (isFaceUp
+                  ? Border.all(color: Colors.grey.shade400, width: 0.8)
+                  : null),
+          boxShadow: highlightColor != null
+              ? [
+                  BoxShadow(
+                      color: highlightColor!.withValues(alpha: 0.55),
+                      blurRadius: 6,
+                      spreadRadius: 2)
+                ]
+              : null,
+        ),
+        child: Center(
+          child: isFaceUp
+              ? Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(suit,
+                        style: TextStyle(
+                            fontSize: suitSize,
+                            color: textColor,
+                            height: 1.1)),
+                    Text(rank,
+                        style: TextStyle(
+                            fontSize: rankSize,
+                            fontWeight: FontWeight.bold,
+                            color: textColor,
+                            height: 1.0)),
+                  ],
+                )
+              : Icon(Icons.help_outline,
+                  size: (cardW * 0.45).clamp(8.0, 20.0),
+                  color: highlightColor != null
+                      ? Colors.white70
+                      : Colors.white38),
+        ),
+      );
+    });
   }
 }

@@ -27,9 +27,18 @@ class StandbyScreen extends StatelessWidget {
             .doc(roomId)
             .snapshots(),
         builder: (context, snap) {
-          if (!snap.hasData || !snap.data!.exists)
+          if (!snap.hasData) {
+            return const Scaffold(body: Center(child: CircularProgressIndicator()));
+          }
+          if (!snap.data!.exists) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (context.mounted) Navigator.popUntil(context, (r) => r.isFirst);
+            });
             return const Scaffold(
-                body: Center(child: CircularProgressIndicator()));
+              backgroundColor: Color(0xFF0A3D14),
+              body: Center(child: CircularProgressIndicator()),
+            );
+          }
           final data = snap.data!.data() as Map<String, dynamic>;
           final playersMap = data['players'] as Map<String, dynamic>;
           if (playersMap[myPlayerId.toString()] == null)
@@ -55,6 +64,8 @@ class StandbyScreen extends StatelessWidget {
           final cpuLevel = (data['cpuLevel'] ?? 1) as int;
           final cpuSlotLevels = Map<String, dynamic>.from(
               data['cpuSlotLevels'] as Map<String, dynamic>? ?? {});
+          final cardCount = (data['cardCount'] ?? 48) as int;
+          final maxTurns = (data['maxTurns'] ?? 50) as int;
           final allReady = activeHumans.every((p) => p['isReady'] == true) &&
               activeHumans.length + selectedCpuCount >= 2;
 
@@ -87,6 +98,10 @@ class StandbyScreen extends StatelessWidget {
             playersMap: playersMap,
             activeHumans: activeHumans.cast<Map<String, dynamic>>(),
             activeCpus: activeCpus.cast<Map<String, dynamic>>(),
+            cardCount: cardCount,
+            maxTurns: maxTurns,
+            onCardCountChanged: (v) => FirestoreService.updateRoomSettings(roomId, cardCount: v),
+            onMaxTurnsChanged: (v) => FirestoreService.updateRoomSettings(roomId, maxTurns: v),
             selectedCpuSlots: selectedCpuSlots,
             selectedCpuCount: selectedCpuCount,
             cpuLevel: cpuLevel,
