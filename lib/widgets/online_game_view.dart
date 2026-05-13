@@ -10,6 +10,7 @@ class OnlineGameView extends StatelessWidget {
   final bool isTallLayout;
   final bool isMyTurn;
   final int turnCount;
+  final int maxTurns;
   final int turn;
   final Map<String, dynamic> players;
   final List<int> turnOrder;
@@ -31,6 +32,7 @@ class OnlineGameView extends StatelessWidget {
     required this.isTallLayout,
     required this.isMyTurn,
     required this.turnCount,
+    required this.maxTurns,
     required this.turn,
     required this.players,
     required this.turnOrder,
@@ -61,7 +63,7 @@ class OnlineGameView extends StatelessWidget {
           toolbarHeight: 50,
           backgroundColor: isMyTurn ? Colors.blue[900] : Colors.red[900],
           title: Text(
-            'TURN: $turnCount / 50',
+            'TURN: $turnCount / ${maxTurns == 0 ? "∞" : "$maxTurns"}',
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
           ),
           centerTitle: true,

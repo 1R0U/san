@@ -4,32 +4,16 @@ import '../models/player_model.dart';
 class FirestoreService {
   static final _db = FirebaseFirestore.instance;
 
-  static List<Map<String, dynamic>> _buildShuffledCards() {
-    final suits = ['♠', '♥', '♦', '♣'];
-    final ranks = [
-      'A',
-      '2',
-      '3',
-      '4',
-      '5',
-      '6',
-      '7',
-      '8',
-      '9',
-      '10',
-      'J',
-      'Q'
-    ];
+  static const _allSuits = ['♠', '♥', '♦', '♣', '♤', '♡', '♢', '♧'];
+  static const _ranks = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q'];
+
+  static List<Map<String, dynamic>> _buildShuffledCards([int cardCount = 48]) {
+    final suitCount = (cardCount / 12).round().clamp(1, 8);
+    final suits = _allSuits.take(suitCount).toList();
     final cards = <Map<String, dynamic>>[];
     for (final s in suits) {
-      for (final r in ranks) {
-        cards.add({
-          'rank': r,
-          'suit': s,
-          'isFaceUp': false,
-          'isTaken': false,
-          'permViewers': []
-        });
+      for (final r in _ranks) {
+        cards.add({'rank': r, 'suit': s, 'isFaceUp': false, 'isTaken': false, 'permViewers': []});
       }
     }
     cards.shuffle();
@@ -211,7 +195,7 @@ class FirestoreService {
         .update({'players.${p.id}': p.toMap()});
   }
 
-  // 退出 & 誰もいなければリセット
+  // 退出 & 誰もいなければ部屋を削除
   static Future<void> leaveRoomAndCleanup(String roomId, int playerId) async {
     final docRef = _db.collection('rooms').doc(roomId);
     await docRef.update({
@@ -222,10 +206,10 @@ class FirestoreService {
     final snap = await docRef.get();
     if (!snap.exists) return;
     final players = snap.data()?['players'] as Map<String, dynamic>? ?? {};
-    bool isRoomEmpty = !players.values.any((p) => p['isActive'] == true);
+    final isRoomEmpty = !players.values.any((p) => p['isActive'] == true);
 
     if (isRoomEmpty) {
-      await resetRoomFull8(roomId);
+      await docRef.delete();
     }
   }
 
@@ -237,9 +221,21 @@ class FirestoreService {
     });
   }
 
+  static Future<void> updateRoomSettings(String roomId, {int? cardCount, int? maxTurns}) async {
+    final updates = <String, dynamic>{};
+    if (cardCount != null) {
+      updates['cardCount'] = cardCount;
+      updates['cards'] = _buildShuffledCards(cardCount);
+    }
+    if (maxTurns != null) updates['maxTurns'] = maxTurns;
+    if (updates.isNotEmpty) {
+      await _db.collection('rooms').doc(roomId).update(updates);
+    }
+  }
+
   static Future<void> resetRoomFull8(String roomId) async {
     await _db.collection('rooms').doc(roomId).set({
-      'cards': _buildShuffledCards(),
+      'cards': _buildShuffledCards(48),
       'players': {},
       'cpuCount': 0,
       'cpuLevel': 1,
@@ -255,6 +251,8 @@ class FirestoreService {
       'firstSelectedIndex': -1,
       'latestEffect': null,
       'effectTimestamp': null,
+      'cardCount': 48,
+      'maxTurns': 50,
     });
   }
 
@@ -268,21 +266,35 @@ class FirestoreService {
         Map<String, dynamic>.from(data['cpuSlotLevels'] ?? {});
     final prevCpuSelectedSlots =
         Map<String, dynamic>.from(data['cpuSelectedSlots'] ?? {});
-    Map players = Map.from(data['players'] ?? {});
+    final players = Map<String, dynamic>.from(data['players'] ?? {});
     players.forEach((k, v) {
       v['score'] = 0;
       v['isReady'] = false;
-      if (v['isCPU'] == true) {
-        v['isActive'] = false;
-      }
+      if (v['isCPU'] == true) v['isActive'] = false;
     });
-    await resetRoomFull8(roomId);
-    await _db.collection('rooms').doc(roomId).update({
+    final prevCardCount = (data['cardCount'] ?? 48) as int;
+    final prevMaxTurns = (data['maxTurns'] ?? 50) as int;
+    // Single atomic set — avoids the race condition where players:{} is
+    // briefly visible between resetRoomFull8 and the subsequent update.
+    await _db.collection('rooms').doc(roomId).set({
+      'cards': _buildShuffledCards(prevCardCount),
       'players': players,
       'cpuCount': prevCpuCount,
       'cpuLevel': prevCpuLevel,
       'cpuSlotLevels': prevCpuSlotLevels,
       'cpuSelectedSlots': prevCpuSelectedSlots,
+      'turnOrder': [],
+      'currentTurn': 1,
+      'turnCount': 1,
+      'cpuMoveLock': 0,
+      'cpuMoveLockAt': null,
+      'isStarted': false,
+      'winner': 0,
+      'firstSelectedIndex': -1,
+      'latestEffect': null,
+      'effectTimestamp': null,
+      'cardCount': prevCardCount,
+      'maxTurns': prevMaxTurns,
     });
   }
 }

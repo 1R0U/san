@@ -1,4 +1,11 @@
 class GameSetup {
+  static const _allSuits = ['♠', '♥', '♦', '♣', '♤', '♡', '♢', '♧'];
+
+  static List<String> suitsForCount(int cardCount) {
+    final suitCount = (cardCount / 12).round().clamp(1, 8);
+    return _allSuits.take(suitCount).toList();
+  }
+
   static List<Map<String, dynamic>> createDeck({
     required List<String> suits,
     required List<String> ranks,

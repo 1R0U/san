@@ -9,8 +9,10 @@ import '../widgets/local_game_view.dart';
 
 class LocalGameScreen extends StatefulWidget {
   final List<Map<String, dynamic>> players;
+  final int cardCount;
+  final int maxTurns;
 
-  const LocalGameScreen({super.key, required this.players});
+  const LocalGameScreen({super.key, required this.players, this.cardCount = 48, this.maxTurns = 50});
 
   @override
   State<LocalGameScreen> createState() => _LocalGameScreenState();
@@ -44,10 +46,10 @@ class _LocalGameScreenState extends State<LocalGameScreen> {
   }
 
   void _initGame() {
-    final ranks = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q'];
+    const ranks = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q'];
 
     _cards = GameSetup.createDeck(
-      suits: ['♠', '♥', '♦', '♣'],
+      suits: GameSetup.suitsForCount(widget.cardCount),
       ranks: ranks,
     );
     _players = GameSetup.createPlayers(widget.players);
@@ -81,7 +83,7 @@ class _LocalGameScreenState extends State<LocalGameScreen> {
 
     final allTaken = _cards.isNotEmpty && _cards.every((card) => card['isTaken'] == true);
     final noLegalMove = !CpuManager.hasLegalMove(_cards, _firstSelectedIndex);
-    final overTurn = _turnCount >= 50;
+    final overTurn = widget.maxTurns > 0 && _turnCount >= widget.maxTurns;
 
     if (!allTaken && !noLegalMove && !overTurn) return;
 
@@ -124,7 +126,7 @@ class _LocalGameScreenState extends State<LocalGameScreen> {
 
       if (effectRank == 'A' || effectRank == '5') {
         setState(() => _tempRevealed = effectData);
-        Future.delayed(const Duration(seconds: 8), () {
+        Future.delayed(const Duration(seconds: 3), () {
           if (mounted) setState(() => _tempRevealed = []);
         });
       }
@@ -207,6 +209,7 @@ class _LocalGameScreenState extends State<LocalGameScreen> {
       isCpuTurn: isCpuTurn,
       firstIndex: firstIndex,
       secondIndex: secondIndex,
+      maxTurns: widget.maxTurns,
     );
 
     _cards = result.cards;
@@ -293,7 +296,7 @@ class _LocalGameScreenState extends State<LocalGameScreen> {
     if (_selectedIndices.length >= _targetCount) {
       if (_isCheckMode) {
         _tempRevealed = List<int>.from(_selectedIndices);
-        Future.delayed(const Duration(seconds: 8), () {
+        Future.delayed(const Duration(seconds: 3), () {
           if (mounted) setState(() => _tempRevealed = []);
         });
       } else if (_isPermanentCheckMode) {
@@ -342,8 +345,11 @@ class _LocalGameScreenState extends State<LocalGameScreen> {
             child: const Text('もう一回'),
           ),
           TextButton(
-            onPressed: () => Navigator.popUntil(context, (r) => r.isFirst),
-            child: const Text('ロビーへ'),
+            onPressed: () {
+              Navigator.pop(c);
+              Navigator.pop(context);
+            },
+            child: const Text('待機へ'),
           ),
         ],
       ),
@@ -355,7 +361,7 @@ class _LocalGameScreenState extends State<LocalGameScreen> {
       context: context,
       builder: (c) => AlertDialog(
         title: const Text('確認'),
-        content: const Text('ロビーに戻りますか？'),
+        content: const Text('待機画面に戻りますか？'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(c, false),
@@ -372,7 +378,7 @@ class _LocalGameScreenState extends State<LocalGameScreen> {
   }
 
   void _exitToLobby() {
-    Navigator.popUntil(context, (r) => r.isFirst);
+    Navigator.pop(context);
   }
 
   @override
@@ -380,6 +386,8 @@ class _LocalGameScreenState extends State<LocalGameScreen> {
     return LocalGameView(
       isTallLayout: _isTallLayout,
       turn: _turn,
+      turnCount: _turnCount,
+      maxTurns: widget.maxTurns,
       players: _players,
       turnOrder: _turnOrder,
       cards: _cards,

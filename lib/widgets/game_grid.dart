@@ -27,23 +27,39 @@ class GameGrid extends StatelessWidget {
     required this.onTap,
   });
 
+  // Wide (PC): 12 cols — one column per rank, one row per suit.
+  static const _wideCols = 12;
+
+  // Tall (phone): column count chosen so ≤12 rows appear on screen.
+  int get _tallCols {
+    final suitCount = cards.length ~/ 12;
+    if (suitCount <= 2) return 4;  // 24 cards → 4×6
+    if (suitCount <= 4) return 6;  // 48 cards → 6×8
+    return 8;                       // 72 cards → 8×9,  96 cards → 8×12
+  }
+
+  // Divide board into 4 visual quadrants for the flip effect highlight.
   Color? _getNineZoneColor(int index) {
-    int crossAxisCount = 12;
-    int r = index ~/ crossAxisCount;
-    int c = index % crossAxisCount;
-    if (r < 2 && c < 6) return Colors.cyanAccent.withOpacity(0.5);
-    if (r < 2 && c >= 6) return Colors.orangeAccent.withOpacity(0.5);
-    if (r >= 2 && c < 6) return Colors.purpleAccent.withOpacity(0.5);
-    if (r >= 2 && c >= 6) return Colors.greenAccent.withOpacity(0.5);
-    return null;
+    const rankCount = 12;
+    final suitCount = cards.length ~/ rankCount;
+    final halfSuits = (suitCount / 2).ceil();
+    final r = index ~/ rankCount;
+    final c = index % rankCount;
+    if (r < halfSuits && c < 6) return Colors.cyanAccent.withOpacity(0.45);
+    if (r < halfSuits && c >= 6) return Colors.orangeAccent.withOpacity(0.45);
+    if (r >= halfSuits && c < 6) return Colors.purpleAccent.withOpacity(0.45);
+    return Colors.greenAccent.withOpacity(0.45);
   }
 
   @override
   Widget build(BuildContext context) {
-    final crossAxisCount = isTallLayout ? 4 : 12;
-    const mainAxisSpacing = 2.0;
-    const crossAxisSpacing = 2.0;
-    const childAspectRatio = 0.75;
+    final crossAxisCount = isTallLayout ? _tallCols : _wideCols;
+
+    // Wide: more breathing room between cards; tall: tighter for small screens.
+    final spacing = isTallLayout ? 2.0 : 4.0;
+
+    // Standard playing-card proportion (2.5 : 3.5 ≈ 0.71).
+    const childAspectRatio = 0.72;
 
     return LayoutBuilder(builder: (context, constraints) {
       final baseWidth = constraints.maxWidth.isFinite
@@ -52,10 +68,9 @@ class GameGrid extends StatelessWidget {
       final safeWidth = baseWidth > 0 ? baseWidth : 1.0;
       final rows = (cards.length / crossAxisCount).ceil();
       final cardWidth =
-          (safeWidth - (crossAxisCount - 1) * crossAxisSpacing) /
-              crossAxisCount;
+          (safeWidth - (crossAxisCount - 1) * spacing) / crossAxisCount;
       final cardHeight = cardWidth / childAspectRatio;
-      final gridHeight = rows * cardHeight + (rows - 1) * mainAxisSpacing;
+      final gridHeight = rows * cardHeight + (rows - 1) * spacing;
 
       return SizedBox(
         height: gridHeight,
@@ -64,23 +79,22 @@ class GameGrid extends StatelessWidget {
           padding: EdgeInsets.zero,
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: crossAxisCount,
-            mainAxisSpacing: mainAxisSpacing,
-            crossAxisSpacing: crossAxisSpacing,
+            mainAxisSpacing: spacing,
+            crossAxisSpacing: spacing,
             childAspectRatio: childAspectRatio,
           ),
           itemCount: cards.length,
           itemBuilder: (context, visualIndex) {
-            final actualIndex = isTallLayout
-                ? ((visualIndex % 4) * 12 + (visualIndex ~/ 4))
-                : visualIndex;
+            // Sequential ordering in both modes — no transposition.
+            // Wide: all 12 ranks fill one row (left→right), suits fill rows (top→bottom).
+            // Tall: cards fill rows left→right in groups of _tallCols.
+            final actualIndex = visualIndex;
 
             Map displayCard = Map.from(cards[actualIndex]);
             List<dynamic> permViewers = displayCard['permViewers'] ?? [];
             bool isPermanentlyRevealedToMe = permViewers.contains(myPlayerId);
 
             Color? hColor;
-
-            // 優先順位に基づいたハイライト色
             if (selectedForExchange.contains(actualIndex)) {
               hColor = Colors.orangeAccent;
             } else if (actualIndex == firstSelectedIndex) {
@@ -95,7 +109,6 @@ class GameGrid extends StatelessWidget {
               hColor = Colors.orange;
             }
 
-            // 一時透視 or 永久透視なら表にする
             if (tempRevealedIndices.contains(actualIndex) ||
                 isPermanentlyRevealedToMe) {
               displayCard['isFaceUp'] = true;

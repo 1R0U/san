@@ -38,11 +38,20 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
   List<int> _tempRevealed = []; // A, 6の効果用
 
   // --- 待機画面へ戻る ---
+  // Resets the entire board atomically so all players return to standby.
   Future<void> _backToStandby() async {
-    await FirestoreService.leaveRoomAndCleanup(
-        widget.roomId, widget.myPlayerId);
+    if (_isEndingFlow) return;
+    _isEndingFlow = true;
+    await FirestoreService.resetBoardOnly(widget.roomId);
     if (mounted) {
-      Navigator.of(context).popUntil((route) => route.isFirst);
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => StandbyScreen(
+            roomId: widget.roomId,
+            myPlayerId: widget.myPlayerId,
+          ),
+        ),
+      );
     }
   }
 
@@ -196,7 +205,8 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
         cards.isNotEmpty && cards.every((c) => c['isTaken'] == true);
     final firstSelectedIndex = (data['firstSelectedIndex'] ?? -1) as int;
     final noLegalMove = !GameFlowUtils.hasLegalMove(cards, firstSelectedIndex);
-    final overTurn = (data['turnCount'] ?? 1) >= 50;
+    final maxTurns = (data['maxTurns'] ?? 50) as int;
+    final overTurn = maxTurns > 0 && (data['turnCount'] ?? 1) >= maxTurns;
 
     if (!allTaken && !noLegalMove && !overTurn) return;
 
@@ -209,7 +219,7 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
           .doc(widget.roomId)
           .update({
         'winner': winner,
-        'turnCount': overTurn ? 50 : (data['turnCount'] ?? 1),
+        'turnCount': overTurn ? maxTurns : (data['turnCount'] ?? 1),
         'firstSelectedIndex': -1,
         'cpuMoveLock': 0,
         'cpuMoveLockAt': null,
@@ -417,13 +427,13 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
       final nextTurn = match
           ? currentTurn
           : GameEffectsLogic.getNextTurn(currentTurn, afterPlayers, turnOrder);
+      final cpuMaxTurns = (afterData['maxTurns'] ?? 50) as int;
       final nextTurnCountRaw = (afterData['turnCount'] ?? 1) + (match ? 0 : 1);
-      final nextTurnCount = nextTurnCountRaw > 50 ? 50 : nextTurnCountRaw;
+      final nextTurnCount = (cpuMaxTurns > 0 && nextTurnCountRaw > cpuMaxTurns) ? cpuMaxTurns : nextTurnCountRaw;
+      final overTurn = cpuMaxTurns > 0 && nextTurnCount >= cpuMaxTurns;
       final winner = afterCards.every((c) => c['isTaken'])
           ? currentTurn
-            : (nextTurnCount >= 50
-              ? GameFlowUtils.resolveWinnerByScore(afterPlayers)
-              : 0);
+          : (overTurn ? GameFlowUtils.resolveWinnerByScore(afterPlayers) : 0);
 
       await docRef.update({
         'cards': afterCards,
@@ -481,7 +491,7 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
 
       if (isMyTurn && (effectRank == 'A' || effectRank == '5')) {
         setState(() => _tempRevealed = effectData);
-        Future.delayed(const Duration(seconds: 8), () {
+        Future.delayed(const Duration(seconds: 3), () {
           if (mounted) setState(() => _tempRevealed = []);
         });
       }
@@ -578,10 +588,11 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
               ? widget.myPlayerId
               : GameEffectsLogic.getNextTurn(
                   widget.myPlayerId, playersMap, turnOrder);
+          final tapMaxTurns = (data['maxTurns'] ?? 50) as int;
           final currentTurnCount = (data['turnCount'] ?? 1) as int;
           final winner = cards.every((c) => c['isTaken'])
               ? widget.myPlayerId
-              : (currentTurnCount >= 50
+              : (tapMaxTurns > 0 && currentTurnCount >= tapMaxTurns
                   ? GameFlowUtils.resolveWinnerByScore(playersMap)
                   : 0);
           await docRef.update({
@@ -601,10 +612,10 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
           final turnOrder = (data['turnOrder'] as List? ?? []).cast<int>();
           final nextTurn = GameEffectsLogic.getNextTurn(
               widget.myPlayerId, playersMap, turnOrder);
+          final tapMaxTurns2 = (data['maxTurns'] ?? 50) as int;
           final nextTurnCountRaw = (data['turnCount'] ?? 1) + 1;
-          final nextTurnCount = nextTurnCountRaw > 50 ? 50 : nextTurnCountRaw;
-          final winner =
-                nextTurnCount >= 50
+          final nextTurnCount = (tapMaxTurns2 > 0 && nextTurnCountRaw > tapMaxTurns2) ? tapMaxTurns2 : nextTurnCountRaw;
+          final winner = tapMaxTurns2 > 0 && nextTurnCount >= tapMaxTurns2
                   ? GameFlowUtils.resolveWinnerByScore(playersMap)
                   : 0;
           await docRef.update({
@@ -631,7 +642,7 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
       List<dynamic> cards = List.from(data['cards']);
       if (_isCheckMode) {
         setState(() => _tempRevealed = List.from(_selectedIndices));
-        Future.delayed(const Duration(seconds: 8),
+        Future.delayed(const Duration(seconds: 3),
             () => setState(() => _tempRevealed = []));
       } else {
         if (_isPermanentCheckMode) {
@@ -701,10 +712,44 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
             .doc(widget.roomId)
             .snapshots(),
         builder: (context, snapshot) {
-          if (!snapshot.hasData || !snapshot.data!.exists)
+          if (!snapshot.hasData) {
+            return const Scaffold(body: Center(child: CircularProgressIndicator()));
+          }
+          if (!snapshot.data!.exists) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              Navigator.popUntil(context, (r) => r.isFirst);
+            });
             return const Scaffold(
-                body: Center(child: CircularProgressIndicator()));
+              backgroundColor: Color(0xFF0A3D14),
+              body: Center(child: CircularProgressIndicator()),
+            );
+          }
           final data = snapshot.data!.data() as Map<String, dynamic>;
+
+          // Detect when another player abandoned the game (isStarted flipped
+          // back to false with no winner). Navigate everyone to standby.
+          if (data['isStarted'] != true &&
+              (data['winner'] ?? 0) == 0 &&
+              !_isEndingFlow) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted || _isEndingFlow) return;
+              _isEndingFlow = true;
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(
+                  builder: (_) => StandbyScreen(
+                    roomId: widget.roomId,
+                    myPlayerId: widget.myPlayerId,
+                  ),
+                ),
+              );
+            });
+            return const Scaffold(
+              backgroundColor: Color(0xFF0A3D14),
+              body: Center(child: CircularProgressIndicator()),
+            );
+          }
+
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!mounted) return;
             _handleGameEndFlowIfNeeded(data);
@@ -742,6 +787,7 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
             isTallLayout: isTallLayout,
             isMyTurn: isMyTurn,
             turnCount: (data['turnCount'] ?? 1) as int,
+            maxTurns: (data['maxTurns'] ?? 50) as int,
             turn: turn,
             players: players,
             turnOrder: turnOrder,

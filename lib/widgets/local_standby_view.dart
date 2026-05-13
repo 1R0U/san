@@ -10,11 +10,15 @@ class LocalStandbyView extends StatelessWidget {
   final List<TextEditingController> controllers;
   final Set<int> cpuSlots;
   final Map<int, int> cpuSlotLevels;
+  final int cardCount;
+  final int maxTurns;
   final ValueChanged<int> onHumanCountChanged;
   final ValueChanged<int> onAddCpu;
   final ValueChanged<int> onRemoveCpu;
   final void Function(int slot) onEditCpuLevel;
   final void Function(int slot) onEditName;
+  final ValueChanged<int> onCardCountChanged;
+  final ValueChanged<int> onMaxTurnsChanged;
   final VoidCallback onStart;
 
   const LocalStandbyView({
@@ -25,11 +29,15 @@ class LocalStandbyView extends StatelessWidget {
     required this.controllers,
     required this.cpuSlots,
     required this.cpuSlotLevels,
+    required this.cardCount,
+    required this.maxTurns,
     required this.onHumanCountChanged,
     required this.onAddCpu,
     required this.onRemoveCpu,
     required this.onEditCpuLevel,
     required this.onEditName,
+    required this.onCardCountChanged,
+    required this.onMaxTurnsChanged,
     required this.onStart,
   });
 
@@ -79,6 +87,42 @@ class LocalStandbyView extends StatelessWidget {
               Text(
                 'CPU: $cpuCount人 / 8人',
                 style: const TextStyle(color: Colors.orangeAccent),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text('枚数', style: TextStyle(color: Colors.white70)),
+              const SizedBox(width: 8),
+              DropdownButton<int>(
+                value: cardCount,
+                dropdownColor: const Color(0xFF114A1E),
+                style: const TextStyle(color: Colors.white),
+                items: const [
+                  DropdownMenuItem(value: 24, child: Text('24枚')),
+                  DropdownMenuItem(value: 48, child: Text('48枚')),
+                  DropdownMenuItem(value: 72, child: Text('72枚')),
+                  DropdownMenuItem(value: 96, child: Text('96枚')),
+                ],
+                onChanged: (v) { if (v != null) onCardCountChanged(v); },
+              ),
+              const SizedBox(width: 20),
+              const Text('ターン', style: TextStyle(color: Colors.white70)),
+              const SizedBox(width: 8),
+              DropdownButton<int>(
+                value: maxTurns,
+                dropdownColor: const Color(0xFF114A1E),
+                style: const TextStyle(color: Colors.white),
+                items: const [
+                  DropdownMenuItem(value: 50, child: Text('50')),
+                  DropdownMenuItem(value: 100, child: Text('100')),
+                  DropdownMenuItem(value: 150, child: Text('150')),
+                  DropdownMenuItem(value: 200, child: Text('200')),
+                  DropdownMenuItem(value: 0, child: Text('∞')),
+                ],
+                onChanged: (v) { if (v != null) onMaxTurnsChanged(v); },
               ),
             ],
           ),

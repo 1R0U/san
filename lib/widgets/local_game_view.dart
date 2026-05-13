@@ -7,6 +7,8 @@ import 'game_header.dart';
 class LocalGameView extends StatelessWidget {
   final bool isTallLayout;
   final int turn;
+  final int turnCount;
+  final int maxTurns;
   final Map<String, dynamic> players;
   final List<int> turnOrder;
   final List<dynamic> cards;
@@ -24,6 +26,8 @@ class LocalGameView extends StatelessWidget {
     super.key,
     required this.isTallLayout,
     required this.turn,
+    required this.turnCount,
+    required this.maxTurns,
     required this.players,
     required this.turnOrder,
     required this.cards,
@@ -52,9 +56,9 @@ class LocalGameView extends StatelessWidget {
         appBar: AppBar(
           toolbarHeight: 50,
           backgroundColor: Colors.indigo[900],
-          title: const Text(
-            'LOCAL MATCH',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          title: Text(
+            'TURN: $turnCount / ${maxTurns == 0 ? "∞" : "$maxTurns"}',
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
           ),
           centerTitle: true,
           actions: [

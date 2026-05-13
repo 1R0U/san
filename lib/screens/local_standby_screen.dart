@@ -12,6 +12,8 @@ class LocalStandbyScreen extends StatefulWidget {
 
 class _LocalStandbyScreenState extends State<LocalStandbyScreen> {
   int _humanCount = 1;
+  int _cardCount = 48;
+  int _maxTurns = 50;
   final Set<int> _cpuSlots = {};
   final Map<int, int> _cpuSlotLevels = {};
   final List<TextEditingController> _controllers = List.generate(
@@ -99,7 +101,11 @@ class _LocalStandbyScreenState extends State<LocalStandbyScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => LocalGameScreen(players: players),
+        builder: (_) => LocalGameScreen(
+          players: players,
+          cardCount: _cardCount,
+          maxTurns: _maxTurns,
+        ),
       ),
     );
   }
@@ -113,11 +119,15 @@ class _LocalStandbyScreenState extends State<LocalStandbyScreen> {
       controllers: _controllers,
       cpuSlots: _cpuSlots,
       cpuSlotLevels: _cpuSlotLevels,
+      cardCount: _cardCount,
+      maxTurns: _maxTurns,
       onHumanCountChanged: _setHumanCount,
       onAddCpu: _addCpu,
       onRemoveCpu: _removeCpu,
       onEditCpuLevel: _editCpuLevel,
       onEditName: _editName,
+      onCardCountChanged: (v) => setState(() => _cardCount = v),
+      onMaxTurnsChanged: (v) => setState(() => _maxTurns = v),
       onStart: _startLocalGame,
     );
   }

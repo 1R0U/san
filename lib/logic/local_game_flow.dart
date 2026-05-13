@@ -43,6 +43,7 @@ class LocalGameFlow {
     required bool isCpuTurn,
     required int firstIndex,
     required int secondIndex,
+    int maxTurns = 50,
   }) {
     final updatedCards = List<dynamic>.from(cards);
     final updatedPlayers = Map<String, dynamic>.from(players);
@@ -163,10 +164,11 @@ class LocalGameFlow {
     }
 
     final allTaken = updatedCards.every((card) => card['isTaken'] == true);
-    final nextTurnCount = match ? turnCount : (turnCount + 1).clamp(0, 50);
+    final nextTurnCount = match ? turnCount : (maxTurns > 0 ? (turnCount + 1).clamp(0, maxTurns) : turnCount + 1);
+    final overTurn = maxTurns > 0 && nextTurnCount >= maxTurns;
     final winner = allTaken
         ? currentTurn
-        : (nextTurnCount >= 50 ? CpuManager.resolveWinnerByScore(updatedPlayers) : 0);
+        : (overTurn ? CpuManager.resolveWinnerByScore(updatedPlayers) : 0);
     final nextTurn = match
         ? currentTurn
         : GameEffectsLogic.getNextTurn(currentTurn, updatedPlayers, turnOrder);
